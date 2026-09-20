@@ -8,6 +8,7 @@ Node.js 22.5 or newer is required for the built-in SQLite API.
 
 ```powershell
 npm run setup
+npm run db:init      # create/upgrade server/data/paperpulse.db
 npm run dev:server   # API at http://localhost:3000
 npm run dev          # UI at http://localhost:5173
 ```
@@ -35,4 +36,5 @@ npm run cli -- --help
 
 The tests do not contact live websites. Example import files are in [`examples`](examples), and the CLI supports `search`, `import`, `clean`, and `summary` commands.
 
+For database tables, fields, constraints, and migration instructions, see [`docs/database.md`](docs/database.md).
 For API examples, architecture, data-source citation details, cleaning and exclusion rules, safeguards, configuration, limitations, and adapter extension instructions, see [`docs/data-pipeline.md`](docs/data-pipeline.md).

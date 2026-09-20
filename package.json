@@ -10,6 +10,7 @@
     "build": "npm --prefix client run build",
     "test": "npm --prefix server test",
     "cli": "npm --prefix server run cli --",
+    "db:init": "npm --prefix server run db:init",
     "start": "npm --prefix server run start",
     "setup": "npm --prefix client install && npm --prefix server install"
   }
