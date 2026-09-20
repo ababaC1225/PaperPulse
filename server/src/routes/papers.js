@@ -9,7 +9,7 @@ function boundedInteger(value, fallback, min, max, label) {
   return parsed
 }
 
-export function createPapersRouter({ repository, searchService, importService }) {
+export function createPapersRouter({ repository, searchService, importService, paperCrudService }) {
   const router = Router()
 
   router.post('/search', async (request, response, next) => {
@@ -51,6 +51,21 @@ export function createPapersRouter({ repository, searchService, importService })
     try {
       const job = importService.create(request.body, request.get('content-type') || 'application/json')
       response.status(202).json(job)
+    } catch (error) { next(error) }
+  })
+
+  router.post('/', (request, response, next) => {
+    try { response.status(201).json(paperCrudService.create(request.body)) } catch (error) { next(error) }
+  })
+
+  router.patch('/:paperId', (request, response, next) => {
+    try { response.json(paperCrudService.update(request.params.paperId, request.body)) } catch (error) { next(error) }
+  })
+
+  router.delete('/:paperId', (request, response, next) => {
+    try {
+      paperCrudService.delete(request.params.paperId)
+      response.status(204).end()
     } catch (error) { next(error) }
   })
 

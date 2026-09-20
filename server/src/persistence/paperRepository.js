@@ -43,20 +43,81 @@ export class PaperRepository {
 
   close() { this.db.close() }
 
-  findDuplicate(record) {
-    const queries = []
-    if (record.doi) queries.push(['SELECT * FROM papers WHERE doi = ?', [record.doi]])
-    if (record.source_name && record.source_record_id) queries.push(['SELECT * FROM papers WHERE source_name = ? AND source_record_id = ?', [record.source_name, record.source_record_id]])
-    if (record.canonical_url) queries.push(['SELECT * FROM papers WHERE canonical_url = ?', [record.canonical_url]])
-    if (record.normalized_title && record.conference && record.year) queries.push([
-      'SELECT * FROM papers WHERE normalized_title = ? AND conference = ? AND year = ?',
-      [record.normalized_title, record.conference, record.year]
-    ])
-    for (const [sql, params] of queries) {
-      const found = this.db.prepare(sql).get(...params)
-      if (found) return rowToPaper(found)
+  findIdentityConflict(record, { excludePaperId = null } = {}) {
+    const checks = []
+    if (record.doi) checks.push({ identity: 'doi', where: 'doi = ?', params: [record.doi] })
+    if (record.source_name && record.source_record_id) {
+      checks.push({ identity: 'source_record', where: 'source_name = ? AND source_record_id = ?', params: [record.source_name, record.source_record_id] })
+    }
+    if (record.canonical_url) checks.push({ identity: 'canonical_url', where: 'canonical_url = ?', params: [record.canonical_url] })
+    if (record.normalized_title && record.conference && record.year) {
+      checks.push({
+        identity: 'normalized_title_conference_year',
+        where: 'normalized_title = ? AND conference = ? AND year = ?',
+        params: [record.normalized_title, record.conference, record.year]
+      })
+    }
+    for (const check of checks) {
+      const exclusion = excludePaperId ? ' AND paper_id <> ?' : ''
+      const params = excludePaperId ? [...check.params, excludePaperId] : check.params
+      const found = this.db.prepare(`SELECT * FROM papers WHERE ${check.where}${exclusion}`).get(...params)
+      if (found) return { identity: check.identity, paper: rowToPaper(found) }
     }
     return null
+  }
+
+  findDuplicate(record, options = {}) {
+    return this.findIdentityConflict(record, options)?.paper || null
+  }
+
+  insertPaper(record) {
+    const now = new Date().toISOString()
+    const paperId = record.paper_id || stablePaperId(record)
+    this.db.prepare(`
+      INSERT INTO papers (
+        paper_id, title, normalized_title, conference, year, abstract, keywords_json,
+        original_url, canonical_url, source_name, source_record_id, doi, authors_json,
+        data_status, missing_fields_json, retrieval_error, retrieved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      paperId, record.title, record.normalized_title, record.conference, record.year,
+      record.abstract, JSON.stringify(record.keywords || []), record.original_url, record.canonical_url,
+      record.source_name, record.source_record_id, record.doi, JSON.stringify(record.authors || []),
+      record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
+      record.retrieved_at || now, now, now
+    )
+    return this.getPaper(paperId)
+  }
+
+  createPaper(record) {
+    const conflict = this.findIdentityConflict(record)
+    if (conflict) return { conflict, paper: null }
+    return { conflict: null, paper: this.insertPaper(record) }
+  }
+
+  updatePaper(paperId, record) {
+    if (!this.getPaper(paperId)) return { conflict: null, paper: null }
+    const conflict = this.findIdentityConflict(record, { excludePaperId: paperId })
+    if (conflict) return { conflict, paper: null }
+    const now = new Date().toISOString()
+    this.db.prepare(`
+      UPDATE papers SET
+        title = ?, normalized_title = ?, conference = ?, year = ?, abstract = ?, keywords_json = ?,
+        original_url = ?, canonical_url = ?, source_name = ?, source_record_id = ?, doi = ?, authors_json = ?,
+        data_status = ?, missing_fields_json = ?, retrieval_error = ?, retrieved_at = ?, updated_at = ?
+      WHERE paper_id = ?
+    `).run(
+      record.title, record.normalized_title, record.conference, record.year,
+      record.abstract, JSON.stringify(record.keywords || []), record.original_url, record.canonical_url,
+      record.source_name, record.source_record_id, record.doi, JSON.stringify(record.authors || []),
+      record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
+      record.retrieved_at || now, now, paperId
+    )
+    return { conflict: null, paper: this.getPaper(paperId) }
+  }
+
+  deletePaper(paperId) {
+    return Number(this.db.prepare('DELETE FROM papers WHERE paper_id = ?').run(paperId).changes) > 0
   }
 
   savePaper(record) {
@@ -93,22 +154,7 @@ export class PaperRepository {
       )
       return { outcome: record.data_status, paper: this.getPaper(existing.paper_id) }
     }
-    const now = new Date().toISOString()
-    const paperId = record.paper_id || stablePaperId(record)
-    this.db.prepare(`
-      INSERT INTO papers (
-        paper_id, title, normalized_title, conference, year, abstract, keywords_json,
-        original_url, canonical_url, source_name, source_record_id, doi, authors_json,
-        data_status, missing_fields_json, retrieval_error, retrieved_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      paperId, record.title, record.normalized_title, record.conference, record.year,
-      record.abstract, JSON.stringify(record.keywords || []), record.original_url, record.canonical_url,
-      record.source_name, record.source_record_id, record.doi, JSON.stringify(record.authors || []),
-      record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
-      record.retrieved_at || now, now, now
-    )
-    return { outcome: record.data_status, paper: this.getPaper(paperId) }
+    return { outcome: record.data_status, paper: this.insertPaper(record) }
   }
 
   getPaper(paperId) {

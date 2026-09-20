@@ -4,6 +4,8 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = new Error(body?.error?.message || `Request failed with status ${response.status}`)
     error.code = body?.error?.code
+    error.status = response.status
+    error.details = body?.error?.details
     error.retryable = body?.error?.retryable
     throw error
   }
@@ -24,6 +26,9 @@ export const paperApi = {
     return request(`/api/papers?${query}`)
   },
   get(paperId) { return request(`/api/papers/${encodeURIComponent(paperId)}`) },
+  create(paper) { return request('/api/papers', jsonOptions('POST', paper)) },
+  update(paperId, paper) { return request(`/api/papers/${encodeURIComponent(paperId)}`, jsonOptions('PATCH', paper)) },
+  delete(paperId) { return request(`/api/papers/${encodeURIComponent(paperId)}`, { method: 'DELETE' }) },
   createImport(payload) { return request('/api/imports', jsonOptions('POST', payload)) },
   getImport(jobId) { return request(`/api/imports/${encodeURIComponent(jobId)}`) },
   retryImport(jobId) { return request(`/api/imports/${encodeURIComponent(jobId)}/retry`, { method: 'POST' }) }

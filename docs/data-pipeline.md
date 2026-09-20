@@ -99,6 +99,9 @@ Run the backend with `npm run dev:server` and frontend with `npm run dev`. The V
 ```text
 POST /api/papers/search                    { "title": "complete or partial title" }
 POST /api/papers/search/:candidateId/confirm
+POST /api/papers                           { "title": "...", "conference": "CVPR", "year": 2025, ... }
+PATCH /api/papers/:paperId                 { "title": "updated title", ... }
+DELETE /api/papers/:paperId
 POST /api/imports                         { "content": "...", "format": "txt|csv" }
 GET  /api/imports/:jobId
 POST /api/imports/:jobId/retry

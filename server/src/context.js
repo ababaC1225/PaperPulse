@@ -7,6 +7,7 @@ import { EcvaAdapter } from './sources/ecvaAdapter.js'
 import { DblpAdapter } from './sources/dblpAdapter.js'
 import { SearchService } from './services/searchService.js'
 import { ImportService } from './services/importService.js'
+import { PaperCrudService } from './services/paperCrudService.js'
 
 export function createContext(options = {}) {
   const config = options.config || loadConfig()
@@ -26,6 +27,7 @@ export function createContext(options = {}) {
   const adapters = options.adapters || config.enabledSources.filter((name) => available[name]).map((name) => available[name]())
   const searchService = options.searchService || new SearchService({ adapters, repository, config, logger })
   const importService = options.importService || new ImportService({ repository, searchService, config, logger })
+  const paperCrudService = options.paperCrudService || new PaperCrudService({ repository, config, logger })
   return {
     config,
     logger,
@@ -34,6 +36,7 @@ export function createContext(options = {}) {
     adapters,
     searchService,
     importService,
+    paperCrudService,
     close() { repository.close() }
   }
 }

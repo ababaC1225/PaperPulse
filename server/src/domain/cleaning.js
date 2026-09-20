@@ -72,7 +72,7 @@ export function canonicalizeConference(value) {
   return null
 }
 
-export function normalizeYear(value, { min = 1950, max = new Date().getUTCFullYear() + 1 } = {}) {
+export function normalizeYear(value, { min = 1980, max = new Date().getUTCFullYear() + 1 } = {}) {
   const match = asString(value).match(/(?:19|20)\d{2}/u)
   if (!match) return null
   const year = Number.parseInt(match[0], 10)
@@ -127,6 +127,7 @@ export function canonicalizeUrl(value) {
   if (!value) return null
   try {
     const url = new URL(String(value))
+    if (!['http:', 'https:'].includes(url.protocol)) return null
     url.hash = ''
     for (const key of [...url.searchParams.keys()]) {
       if (/^(utm_|ref$|source$)/iu.test(key)) url.searchParams.delete(key)
@@ -173,7 +174,12 @@ export function cleanPaperRecord(input, options = {}) {
   const abstract = cleanAbstract(input.abstract)
   const keywords = normalizeKeywords(input.keywords, options)
   const originalUrl = canonicalizeUrl(input.original_url || input.originalUrl || input.url)
-  const doi = cleanDisplayText(input.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, '').toLowerCase() || null
+  const doi = cleanDisplayText(
+    asString(input.doi)
+      .trim()
+      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, '')
+      .replace(/^doi:\s*/iu, '')
+  ).toLowerCase() || null
   const sourceName = cleanDisplayText(input.source_name || input.sourceName).toLowerCase() || null
   const sourceRecordId = cleanDisplayText(input.source_record_id || input.sourceRecordId) || null
   const authors = cleanAuthors(input.authors)

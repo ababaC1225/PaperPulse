@@ -21,6 +21,12 @@ export class NotFoundError extends AppError {
   }
 }
 
+export class ConflictError extends AppError {
+  constructor(message, details = null) {
+    super(message, { status: 409, code: 'duplicate_conflict', details })
+  }
+}
+
 export class GoneError extends AppError {
   constructor(message, details = null) {
     super(message, { status: 410, code: 'expired', details })
