@@ -1,0 +1,16 @@
+{
+  "name": "paperpulse",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PaperPulse - research trend dashboard (Vue 3 client + Express server)",
+  "scripts": {
+    "dev": "npm --prefix client run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build": "npm --prefix client run build",
+    "test": "npm --prefix server test",
+    "cli": "npm --prefix server run cli --",
+    "start": "npm --prefix server run start",
+    "setup": "npm --prefix client install && npm --prefix server install"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "result": {
+    "hits": {
+      "hit": [
+        {
+          "info": {
+            "title": "Scalable Vision-Language Models &amp; Mixture of Experts",
+            "venue": "CVPR",
+            "year": "2025",
+            "key": "conf/cvpr/ZhangLi25",
+            "doi": "10.1000/example",
+            "ee": "https://openaccess.thecvf.com/content/CVPR2025/html/Zhang_Example_CVPR_2025_paper.html",
+            "authors": { "author": [{ "text": "A. Zhang" }, { "text": "B. Li" }] }
+          }
+        },
+        {
+          "info": { "title": "Unrelated Database Paper", "venue": "SIGMOD", "year": "2025" }
+        }
+      ]
+    }
+  }
+}
