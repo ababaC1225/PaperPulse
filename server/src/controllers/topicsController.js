@@ -1,6 +1,6 @@
 import { normalizeKeywords } from '../domain/cleaning.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
-import { boundedInteger, optionalConference, optionalYear } from '../lib/paperQuery.js'
+import { boundedInteger, minimumInteger, optionalConference, optionalYear } from '../lib/paperQuery.js'
 import { HOT_TOPIC_SORTS } from '../persistence/paperRepository.js'
 
 function singleQueryValue(value, label) {
@@ -28,6 +28,16 @@ function normalizedTopic(value) {
   const topics = normalizeKeywords(input)
   if (!input || topics.length !== 1) {
     throw new ValidationError('Topic must be one non-empty normalized keyword')
+  }
+  return topics[0]
+}
+
+function optionalNormalizedTopic(value) {
+  const input = singleQueryValue(value, 'Focus')
+  if (!input) return null
+  const topics = normalizeKeywords(input)
+  if (topics.length !== 1) {
+    throw new ValidationError('Focus must be one complete normalized keyword')
   }
   return topics[0]
 }
@@ -62,10 +72,21 @@ export function createGetTopicDetail({ repository }) {
   }
 }
 
-export function getKeywordNetwork(_request, response) {
-  response.json({
-    nodes: [],
-    links: [],
-    note: 'Keyword network analysis is not implemented in this milestone.'
-  })
+export function createGetKeywordNetwork({ repository }) {
+  return function getKeywordNetwork(request, response, next) {
+    try {
+      const focus = optionalNormalizedTopic(request.query.focus)
+      const network = repository.getKeywordNetwork({
+        conference: optionalConference(request.query.conference),
+        year: optionalYear(request.query.year),
+        maxNodes: boundedInteger(request.query.max_nodes, 20, 2, 50, 'Maximum nodes'),
+        minNodeCount: minimumInteger(request.query.min_node_count, 1, 1, 'Minimum node count'),
+        minEdgeCount: minimumInteger(request.query.min_edge_count, 1, 1, 'Minimum edge count'),
+        maxEdges: boundedInteger(request.query.max_edges, 100, 1, 300, 'Maximum edges'),
+        focus
+      })
+      if (!network) throw new NotFoundError(`Focus keyword not found in the selected scope: ${focus}`)
+      response.json(network)
+    } catch (error) { next(error) }
+  }
 }

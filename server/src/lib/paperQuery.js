@@ -34,3 +34,13 @@ export function boundedInteger(value, fallback, min, max, label) {
   }
   return parsed
 }
+
+export function minimumInteger(value, fallback, min, label) {
+  const input = scalarQueryValue(value, label)
+  if (!input) return fallback
+  const parsed = Number(input)
+  if (!Number.isInteger(parsed) || parsed < min) {
+    throw new ValidationError(`${label} must be an integer greater than or equal to ${min}`)
+  }
+  return parsed
+}

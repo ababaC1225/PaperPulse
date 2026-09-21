@@ -56,6 +56,10 @@ function percentageChange(value, previousValue) {
   return Number((((value - previousValue) / previousValue) * 100).toFixed(1))
 }
 
+function compareTopics(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
 function latestPaperTimestamp(row) {
   if (!row) return null
   return row.updated_at >= row.retrieved_at ? row.updated_at : row.retrieved_at
@@ -396,6 +400,152 @@ export class PaperRepository {
         previous_paper_count: previousYear ? Number(row.previous_paper_count) : null,
         growth_percent: row.growth_percent == null ? null : Number(row.growth_percent)
       }))
+    }
+  }
+
+  getKeywordNetwork({
+    conference = null,
+    year = null,
+    maxNodes = 20,
+    minNodeCount = 1,
+    minEdgeCount = 1,
+    maxEdges = 100,
+    focus = null
+  } = {}) {
+    const scope = eligiblePaperScope({ conference, year }, 'papers')
+    const eligiblePaperTotal = this.countEligiblePapers({ conference, year })
+    const topicRowsSql = `
+      WITH eligible_topics AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${scope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      )
+    `
+    const nodeRows = this.db.prepare(`${topicRowsSql}
+      SELECT topic, COUNT(*) AS paper_count
+      FROM eligible_topics
+      GROUP BY topic
+      ORDER BY paper_count DESC, topic COLLATE NOCASE ASC
+    `).all(...scope.params).map((row) => ({
+      topic: row.topic,
+      paper_count: Number(row.paper_count)
+    }))
+    const nodeCountByTopic = new Map(nodeRows.map((node) => [node.topic, node.paper_count]))
+
+    if (focus && !nodeCountByTopic.has(focus)) return null
+
+    const queryPairs = ({ selectedTopics = null, focusTopic = null } = {}) => {
+      const pairClauses = []
+      const pairParams = []
+      if (selectedTopics) {
+        if (selectedTopics.length < 2) return []
+        const placeholders = selectedTopics.map(() => '?').join(', ')
+        pairClauses.push(`source_topic.topic IN (${placeholders})`)
+        pairClauses.push(`target_topic.topic IN (${placeholders})`)
+        pairParams.push(...selectedTopics, ...selectedTopics)
+      }
+      if (focusTopic) {
+        pairClauses.push('(source_topic.topic = ? OR target_topic.topic = ?)')
+        pairParams.push(focusTopic, focusTopic)
+      }
+      const pairWhere = pairClauses.length ? `WHERE ${pairClauses.join(' AND ')}` : ''
+      return this.db.prepare(`${topicRowsSql}
+        SELECT
+          source_topic.topic AS source,
+          target_topic.topic AS target,
+          COUNT(*) AS cooccurrence_count
+        FROM eligible_topics AS source_topic
+        JOIN eligible_topics AS target_topic
+          ON target_topic.paper_id = source_topic.paper_id
+          AND source_topic.topic < target_topic.topic
+        ${pairWhere}
+        GROUP BY source_topic.topic, target_topic.topic
+        HAVING COUNT(*) >= ?
+        ORDER BY cooccurrence_count DESC, source COLLATE NOCASE ASC, target COLLATE NOCASE ASC
+      `).all(...scope.params, ...pairParams, minEdgeCount).map((row) => {
+        const cooccurrenceCount = Number(row.cooccurrence_count)
+        const unionCount = nodeCountByTopic.get(row.source) + nodeCountByTopic.get(row.target) - cooccurrenceCount
+        return {
+          source: row.source,
+          target: row.target,
+          cooccurrence_count: cooccurrenceCount,
+          jaccard_similarity: unionCount ? Number((cooccurrenceCount / unionCount).toFixed(4)) : 0
+        }
+      })
+    }
+
+    let selectedNodes
+    if (focus) {
+      const connectedNodes = queryPairs({ focusTopic: focus })
+        .map((link) => {
+          const topic = link.source === focus ? link.target : link.source
+          return { topic, link, paper_count: nodeCountByTopic.get(topic) }
+        })
+        .filter((neighbor) => neighbor.paper_count >= minNodeCount)
+        .sort((left, right) => (
+          right.link.cooccurrence_count - left.link.cooccurrence_count
+          || right.link.jaccard_similarity - left.link.jaccard_similarity
+          || right.paper_count - left.paper_count
+          || compareTopics(left.topic, right.topic)
+        ))
+        .slice(0, Math.max(0, maxNodes - 1))
+      selectedNodes = [
+        { topic: focus, paper_count: nodeCountByTopic.get(focus) },
+        ...connectedNodes.map(({ topic, paper_count: paperCount }) => ({ topic, paper_count: paperCount }))
+      ]
+    } else {
+      selectedNodes = nodeRows
+        .filter((node) => node.paper_count >= minNodeCount)
+        .slice(0, maxNodes)
+    }
+
+    const links = queryPairs({ selectedTopics: selectedNodes.map((node) => node.topic) })
+      .sort((left, right) => (
+        right.cooccurrence_count - left.cooccurrence_count
+        || right.jaccard_similarity - left.jaccard_similarity
+        || compareTopics(left.source, right.source)
+        || compareTopics(left.target, right.target)
+      ))
+      .slice(0, maxEdges)
+
+    const connections = new Map(selectedNodes.map((node) => [node.topic, { degree: 0, weightedDegree: 0 }]))
+    for (const link of links) {
+      const source = connections.get(link.source)
+      const target = connections.get(link.target)
+      source.degree += 1
+      source.weightedDegree += link.cooccurrence_count
+      target.degree += 1
+      target.weightedDegree += link.cooccurrence_count
+    }
+
+    return {
+      scope: { conference, year, focus },
+      methodology: {
+        eligible_paper_total: eligiblePaperTotal,
+        node_unit: 'distinct eligible papers containing a normalized keyword',
+        edge_unit: 'distinct eligible papers containing both normalized keywords',
+        similarity: 'Jaccard similarity',
+        causality_warning: 'Keyword co-occurrence does not imply academic quality, semantic equivalence, importance, or causality.'
+      },
+      nodes: selectedNodes.map((node) => ({
+        id: node.topic,
+        topic: node.topic,
+        paper_count: node.paper_count,
+        share_percent: eligiblePaperTotal
+          ? Number(((node.paper_count / eligiblePaperTotal) * 100).toFixed(1))
+          : 0,
+        degree: connections.get(node.topic).degree,
+        weighted_degree: connections.get(node.topic).weightedDegree,
+        focused: node.topic === focus
+      })),
+      links
     }
   }
 

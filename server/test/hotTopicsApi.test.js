@@ -205,7 +205,7 @@ test('topic detail uses exact keyword matching, ascending eligible years, and re
   } finally { await api.close() }
 })
 
-test('topic APIs validate every filter and retain the explicit network placeholder', async () => {
+test('hot-topic and topic-detail validation remains intact beside the live network endpoint', async () => {
   const api = await startApi()
   try {
     const hot = await getJson(api.base, '/api/topics/hot?conference=CVPR&year=2025&sort=growth&limit=3')
@@ -231,8 +231,8 @@ test('topic APIs validate every filter and retain the explicit network placehold
     assert.equal(unknown.error.code, 'not_found')
 
     const network = await getJson(api.base, '/api/topics/network')
-    assert.deepEqual(network.nodes, [])
-    assert.equal(network.note.includes('not implemented'), true)
+    assert.equal(network.nodes.length > 0, true)
+    assert.equal(network.methodology.similarity, 'Jaccard similarity')
   } finally { await api.close() }
 })
 

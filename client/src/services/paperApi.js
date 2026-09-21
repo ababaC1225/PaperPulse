@@ -32,6 +32,7 @@ export const paperApi = {
   recent(params = {}) { return request(withQuery('/api/papers/recent', params)) },
   overviewStats(params = {}) { return request(withQuery('/api/overview/stats', params)) },
   hotTopics(params = {}) { return request(withQuery('/api/topics/hot', params)) },
+  keywordNetwork(params = {}) { return request(withQuery('/api/topics/network', params)) },
   topicDetail(topic, params = {}) {
     return request(withQuery(`/api/topics/${encodeURIComponent(topic)}`, params))
   },

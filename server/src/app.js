@@ -9,6 +9,7 @@ import { AppError } from './lib/errors.js'
 export function createApp(context) {
   const app = express()
   app.disable('x-powered-by')
+  app.set('query parser', 'extended')
   app.use(cors())
   app.use(express.text({ type: ['text/plain', 'text/csv'], limit: '2mb' }))
   app.use(express.json({ limit: '2mb' }))

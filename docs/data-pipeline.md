@@ -108,7 +108,7 @@ POST /api/imports/:jobId/retry
 GET  /api/overview/stats?conference=&year=
 GET  /api/topics/hot?conference=&year=&query=&sort=&limit=
 GET  /api/topics/:topic?conference=&year=&paper_limit=
-GET  /api/topics/network
+GET  /api/topics/network?conference=&year=&max_nodes=&min_node_count=&min_edge_count=&max_edges=&focus=
 GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
 GET  /api/papers/facets
 GET  /api/papers/recent?conference=&year=&limit=
@@ -169,7 +169,29 @@ Ranking is deterministic. Count order is paper count descending then topic ascen
 
 The trend retains the optional conference filter but spans all publication years even when a display year is selected. It returns ascending years that contain at least one eligible paper in that conference scope. An available year is included with a zero topic count when appropriate; calendar years with no eligible papers are omitted. Every point includes the raw topic count, eligible-paper denominator, and normalized share.
 
-Topic frequency and keyword co-occurrence are descriptive database measures. They do not establish academic quality, importance, or causality. `GET /api/topics/network` remains an explicit placeholder; database-backed keyword co-occurrence is a later milestone.
+Topic frequency is a descriptive database measure. It does not establish academic quality, importance, or causality.
+
+### Keyword co-occurrence network
+
+`GET /api/topics/network` builds a deterministic undirected network from the same analysis-eligible papers used by hot-topic analysis. Optional `conference` and `year` values select the scope. `max_nodes` defaults to 20 and accepts 2–50; `min_node_count` defaults to 1 and accepts positive integers; `min_edge_count` defaults to 1 and accepts positive integers; and `max_edges` defaults to 100 and accepts 1–300. `focus` optionally identifies one complete normalized keyword. Invalid values return HTTP 400, while an unknown focus keyword in the selected scope returns HTTP 404.
+
+A node represents one stored normalized keyword. Its `paper_count` is the number of distinct eligible papers containing it, and `share_percent = paper_count / eligible_paper_total × 100`, rounded to one decimal place. Duplicate keyword entries within one paper are collapsed before counting. Eligibility requires a non-empty abstract, at least one non-empty keyword, and a status other than `fetch_failed`; malformed keyword JSON contributes neither a paper nor a keyword and does not interrupt the request.
+
+An edge represents two different normalized keywords in the same eligible paper. Each paper contributes at most once to an unordered pair. Endpoints are stored lexically as `source < target`, preventing separate A–B and B–A edges. `cooccurrence_count` is the number of distinct eligible papers containing both endpoints. Similarity is returned as a rounded number using:
+
+```text
+jaccard_similarity =
+  cooccurrence_count /
+  (source_paper_count + target_paper_count - cooccurrence_count)
+```
+
+For a global network, nodes first pass `min_node_count`, then sort by paper count descending and topic ascending before `max_nodes` truncation. Edges are calculated only between the selected nodes, pass `min_edge_count`, sort by co-occurrence descending, Jaccard descending, source, and target, then stop at `max_edges`. Node `degree` counts returned incident edges; `weighted_degree` sums their returned co-occurrence counts.
+
+For a focused network, the focus node is retained even when its count is below `min_node_count`. Direct neighbors must meet the node and edge thresholds and are ranked by co-occurrence descending, Jaccard descending, node paper count descending, then topic ascending. The result contains the focus plus at most `max_nodes - 1` such neighbors. Returned edges include every qualifying pair among the final nodes, including neighbor-to-neighbor edges, and still obey `max_edges`.
+
+The current SQLite implementation expands each eligible paper into distinct keywords and then self-joins those keywords to form pairs. Pair generation is quadratic in the number of keywords on one paper, so unusually large keyword arrays or very large corpora may require precomputed aggregate tables or a background analysis job. Thresholds and response limits bound output size but do not eliminate that intermediate work.
+
+Keyword frequency and co-occurrence are descriptive. They do not imply academic quality, semantic equivalence, importance, or causality.
 
 ### Paper Library search and pagination
 
@@ -213,7 +235,7 @@ npm run cli -- summary <job-id>
 
 ## Tests and fixtures
 
-`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, hot-topic formulas/filtering/sorting/exact detail matching/trends, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
+`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, hot-topic formulas/filtering/sorting/exact detail matching/trends, keyword-network nodes/pairs/Jaccard/thresholds/focus behavior, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
 
 ## Known limitations
 
@@ -222,7 +244,7 @@ npm run cli -- summary <job-id>
 - DBLP is bibliographic fallback data and normally does not provide abstracts or keywords.
 - The ECVA index layout may cover different years unevenly.
 - Batch execution is an in-process worker. For durable automatic resume and multiple server replicas, replace it with a persistent queue and startup recovery policy.
-- The keyword-network endpoint is not database-backed yet; only hot-topic ranking and topic detail are live in this milestone.
+- The SQLite keyword-network query computes pairs on demand. Large corpora or papers with unusually many keywords will eventually need precomputed aggregates or a background analysis job.
 - SQLite uses Node's built-in `node:sqlite`, which is marked experimental in the current Node 22 runtime even though the exercised API is functional.
 
 ## Adding another source

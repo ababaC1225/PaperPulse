@@ -14,11 +14,13 @@ const facets = ref({ conferences: [], years: [] })
 const overview = ref(null)
 const recentPapers = ref([])
 const hotTopicsResponse = ref(null)
+const networkResponse = ref(null)
 const loading = ref(false)
 const hasLoaded = ref(false)
 const facetsLoaded = ref(false)
 const loadError = ref('')
 const hotTopicsError = ref('')
+const networkError = ref('')
 let requestSequence = 0
 
 const initialLoading = computed(() => loading.value && !hasLoaded.value)
@@ -36,6 +38,11 @@ const hotTopicsEmptyMessage = computed(() => {
   if (emptyDatabase.value) return 'No papers are stored yet.'
   if (emptyScope.value) return 'No eligible topics match the selected conference and year.'
   return 'No eligible topics are available.'
+})
+const networkEmptyMessage = computed(() => {
+  if (emptyDatabase.value) return 'No papers are stored yet.'
+  if (emptyScope.value) return 'No eligible keyword network matches the selected scope.'
+  return 'No eligible keyword relationships are available.'
 })
 
 const numberFormatter = new Intl.NumberFormat('en-US')
@@ -103,16 +110,20 @@ async function loadDashboard({ includeFacets = false } = {}) {
   loading.value = true
   loadError.value = ''
   hotTopicsError.value = ''
+  networkError.value = ''
   try {
     const requests = [
       paperApi.overviewStats(currentParams()),
       paperApi.recent({ ...currentParams(), limit: 4 }),
       paperApi.hotTopics({ ...currentParams(), sort: 'count', limit: 10 })
         .then((value) => ({ value, error: null }))
+        .catch((error) => ({ value: null, error })),
+      paperApi.keywordNetwork({ ...currentParams(), max_nodes: 6, max_edges: 10 })
+        .then((value) => ({ value, error: null }))
         .catch((error) => ({ value: null, error }))
     ]
     if (includeFacets) requests.push(paperApi.facets())
-    const [statsResult, recentResult, hotTopicsResult, facetsResult] = await Promise.all(requests)
+    const [statsResult, recentResult, hotTopicsResult, networkResult, facetsResult] = await Promise.all(requests)
     if (requestId !== requestSequence) return
     overview.value = statsResult
     recentPapers.value = recentResult
@@ -120,6 +131,11 @@ async function loadDashboard({ includeFacets = false } = {}) {
       hotTopicsError.value = `Live topics could not be refreshed: ${hotTopicsResult.error.message}`
     } else {
       hotTopicsResponse.value = hotTopicsResult.value
+    }
+    if (networkResult.error) {
+      networkError.value = `Keyword network could not be refreshed: ${networkResult.error.message}`
+    } else {
+      networkResponse.value = networkResult.value
     }
     if (facetsResult) {
       facets.value = facetsResult
@@ -202,7 +218,14 @@ onBeforeUnmount(() => { requestSequence += 1 })
         :baseline-year="hotTopicsResponse?.methodology?.growth_baseline_year"
         @retry="refreshDashboard"
       />
-      <KeywordNetwork />
+      <KeywordNetwork
+        :nodes="networkResponse?.nodes || []"
+        :links="networkResponse?.links || []"
+        :loading="initialLoading && !networkResponse"
+        :error="networkError"
+        :empty-message="networkEmptyMessage"
+        @retry="refreshDashboard"
+      />
     </div>
 
     <RecentPapersCard :papers="recentPapers" :loading="initialLoading" :empty-message="recentEmptyMessage" />
