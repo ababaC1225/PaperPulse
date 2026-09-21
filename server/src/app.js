@@ -1,6 +1,6 @@
 import express from 'express'
 import cors from 'cors'
-import overviewRouter from './routes/overview.js'
+import { createOverviewRouter } from './routes/overview.js'
 import topicsRouter from './routes/topics.js'
 import { createPapersRouter } from './routes/papers.js'
 import { createImportsRouter } from './routes/imports.js'
@@ -16,7 +16,7 @@ export function createApp(context) {
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok', service: 'paperpulse-server', time: new Date().toISOString() })
   })
-  app.use('/api/overview', overviewRouter)
+  app.use('/api/overview', createOverviewRouter(context))
   app.use('/api/topics', topicsRouter)
   app.use('/api/papers', createPapersRouter(context))
   app.use('/api/imports', createImportsRouter(context))

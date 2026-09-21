@@ -105,9 +105,50 @@ DELETE /api/papers/:paperId
 POST /api/imports                         { "content": "...", "format": "txt|csv" }
 GET  /api/imports/:jobId
 POST /api/imports/:jobId/retry
+GET  /api/overview/stats?conference=&year=
 GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
+GET  /api/papers/facets
+GET  /api/papers/recent?conference=&year=&limit=
 GET  /api/papers/:paperId
 ```
+
+### Overview metrics and recent papers
+
+`GET /api/overview/stats` accepts optional `conference` (`CVPR`, `ICCV`, or `ECCV`) and publication `year` filters. Blank filter values are treated as unset; invalid values return HTTP 400. Its response is explicit about the selected scope and each metric:
+
+```json
+{
+  "scope": { "conference": "CVPR", "year": 2025 },
+  "papers": { "value": 0, "previous_value": 0, "delta_percent": null },
+  "topics": { "value": 0, "previous_value": 0, "delta_percent": null },
+  "conferences": { "value": 0 },
+  "data_quality": {
+    "complete": 0,
+    "missing_fields": 0,
+    "fetch_failed": 0,
+    "complete_percent": 0
+  },
+  "last_sync": { "value": null, "status": "empty" }
+}
+```
+
+Metrics use these definitions:
+
+- `papers.value` is the number of all stored papers in the selected scope.
+- `topics.value` is the number of distinct lowercase, trimmed, non-empty normalized keywords contributed by analysis-eligible papers. Eligibility requires a non-empty abstract, at least one non-empty keyword, and a status other than `fetch_failed`.
+- `conferences.value` is the number of distinct non-null conferences represented in the selected scope.
+- `data_quality` counts scoped papers in each stored quality state. `complete_percent` is the complete count divided by all scoped papers, rounded to one decimal place, or zero for an empty scope.
+- `last_sync.value` is the newest relevant `updated_at` or `retrieved_at` timestamp. Its status is `empty` when the scope has no papers, `up-to-date` when that timestamp is within the last 24 hours, and `stale` otherwise.
+
+When a year is selected, paper and topic metrics compare with the preceding publication year while retaining the same conference filter. `delta_percent` is rounded to one decimal place. It is `null` when the preceding value is zero, preventing division by zero and misleading percentages. When no year is selected, `previous_value` and `delta_percent` are both `null`; the API does not infer a comparison year.
+
+`GET /api/papers/recent` accepts the same optional conference/year scope plus `limit`. The limit defaults to 4 and must be between 1 and 20. Results are ordered by `updated_at` descending, then title and paper ID for deterministic ties. Each result contains only `paper_id`, `title`, `authors`, `conference`, `year`, `keywords`, `data_status`, and `updated_at`.
+
+`GET /api/papers/facets` returns the distinct stored conferences and publication years, with years newest first. The Overview year selector uses this endpoint rather than a hard-coded year list.
+
+The Top 10 Hot Topics card and keyword-network visualization remain reference data in this milestone; their ranking and graph algorithms are separate future work.
+
+### Paper Library search and pagination
 
 `GET /api/papers` performs all Paper Library search, filtering, sorting, and pagination on the server. `query` is a case-insensitive contains search across paper ID, display title, normalized title, authors, and keywords. Literal `%`, `_`, and backslash characters are escaped before the parameterized SQLite query is executed. `conference` accepts `CVPR`, `ICCV`, or `ECCV`; `data_status` accepts `complete`, `missing_fields`, or `fetch_failed`; `source_name` is an exact case-insensitive source-name filter. The legacy `status` parameter remains accepted as an alias for `data_status`.
 
@@ -149,7 +190,7 @@ npm run cli -- summary <job-id>
 
 ## Tests and fixtures
 
-`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
+`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
 
 ## Known limitations
 

@@ -18,13 +18,19 @@ const jsonOptions = (method, body) => ({
   body: JSON.stringify(body)
 })
 
+function withQuery(path, params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== ''))
+  const suffix = query.toString()
+  return suffix ? `${path}?${suffix}` : path
+}
+
 export const paperApi = {
   search(title) { return request('/api/papers/search', jsonOptions('POST', { title })) },
   confirm(candidateId) { return request(`/api/papers/search/${encodeURIComponent(candidateId)}/confirm`, { method: 'POST' }) },
-  list(params = {}) {
-    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== ''))
-    return request(`/api/papers?${query}`)
-  },
+  list(params = {}) { return request(withQuery('/api/papers', params)) },
+  facets() { return request('/api/papers/facets') },
+  recent(params = {}) { return request(withQuery('/api/papers/recent', params)) },
+  overviewStats(params = {}) { return request(withQuery('/api/overview/stats', params)) },
   get(paperId) { return request(`/api/papers/${encodeURIComponent(paperId)}`) },
   create(paper) { return request('/api/papers', jsonOptions('POST', paper)) },
   update(paperId, paper) { return request(`/api/papers/${encodeURIComponent(paperId)}`, jsonOptions('PATCH', paper)) },

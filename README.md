@@ -25,6 +25,7 @@ The Vite server proxies `/api` to the Express server. Paper data is stored in `s
 - Browse stored records and view source, quality state, missing fields, and analysis eligibility.
 - Manually create, edit, and delete library papers with validation and duplicate-conflict protection.
 - Search, filter, sort, and paginate the Paper Library through server-side SQLite queries.
+- View database-backed Overview metrics and recent papers scoped by conference and publication year.
 
 Frontend routes include `/`, `/hot-topics`, `/keyword-map`, `/trend-analysis`, `/papers`, `/papers/:id`, `/import`, `/about`, and `/states-errors`.
 

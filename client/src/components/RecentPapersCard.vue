@@ -1,10 +1,42 @@
 <script setup>
 import { Newspaper, ArrowRight } from 'lucide-vue-next'
-import { recentPapers } from '@/data/mock'
+
+defineProps({
+  papers: { type: Array, default: () => [] },
+  loading: { type: Boolean, default: false },
+  emptyMessage: { type: String, default: 'No recent papers are available.' }
+})
+
+const dateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short', day: 'numeric', year: 'numeric'
+})
+
+function formatAuthors(value) {
+  const authors = Array.isArray(value)
+    ? value.map((author) => String(author).trim()).filter(Boolean)
+    : []
+  if (!authors.length) return 'Not available'
+  if (authors.length <= 2) return authors.join(', ')
+  return `${authors[0]} et al.`
+}
+
+function formatConference(paper) {
+  const values = [paper?.conference, paper?.year].filter((value) => value != null && value !== '')
+  return values.length ? values.join(' ') : 'Not available'
+}
+
+function formatDate(value) {
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? dateFormatter.format(timestamp) : 'Not available'
+}
+
+function paperRoute(paper) {
+  return paper?.paper_id ? `/papers/${encodeURIComponent(paper.paper_id)}` : '/papers'
+}
 </script>
 
 <template>
-  <section class="card recent-card">
+  <section class="card recent-card" :aria-busy="loading">
     <header class="card-header">
       <div class="card-title">
         <Newspaper color="#14152b" :stroke-width="2" />
@@ -26,14 +58,16 @@ import { recentPapers } from '@/data/mock'
           </tr>
         </thead>
         <tbody>
-          <tr v-for="paper in recentPapers.slice(0, 4)" :key="paper.title">
+          <tr v-for="paper in papers" :key="paper.paper_id">
             <td class="col-title">
-              <router-link to="/papers" class="paper-title">{{ paper.title }}</router-link>
+              <router-link :to="paperRoute(paper)" class="paper-title">{{ paper.title || 'Not available' }}</router-link>
             </td>
-            <td class="col-authors">{{ paper.authors }}</td>
-            <td class="col-conf">{{ paper.conference }}</td>
-            <td class="col-date">{{ paper.date }}</td>
+            <td class="col-authors">{{ formatAuthors(paper.authors) }}</td>
+            <td class="col-conf">{{ formatConference(paper) }}</td>
+            <td class="col-date">{{ formatDate(paper.updated_at) }}</td>
           </tr>
+          <tr v-if="loading && !papers.length" class="state-row"><td colspan="4">Loading recent papers…</td></tr>
+          <tr v-else-if="!papers.length" class="state-row"><td colspan="4">{{ emptyMessage }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -86,6 +120,16 @@ import { recentPapers } from '@/data/mock'
 
 .papers-table tbody tr:hover {
   background: #fafbff;
+}
+
+.papers-table .state-row:hover {
+  background: transparent;
+}
+
+.papers-table .state-row td {
+  height: 118px;
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .col-title {

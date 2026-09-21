@@ -16,6 +16,25 @@ function containsPattern(value) {
   return `%${escaped}%`
 }
 
+function paperScope({ conference = null, year = null } = {}, table = '') {
+  const prefix = table ? `${table}.` : ''
+  const clauses = []
+  const params = []
+  if (conference) { clauses.push(`${prefix}conference = ?`); params.push(conference) }
+  if (year) { clauses.push(`${prefix}year = ?`); params.push(year) }
+  return { clauses, params }
+}
+
+function percentageChange(value, previousValue) {
+  if (previousValue === 0) return null
+  return Number((((value - previousValue) / previousValue) * 100).toFixed(1))
+}
+
+function latestPaperTimestamp(row) {
+  if (!row) return null
+  return row.updated_at >= row.retrieved_at ? row.updated_at : row.retrieved_at
+}
+
 function json(value, fallback = []) {
   if (value == null) return fallback
   try { return JSON.parse(value) } catch { return fallback }
@@ -219,6 +238,129 @@ export class PaperRepository {
       has_previous: offset > 0,
       has_next: offset + limit < total
     }
+  }
+
+  countEligibleTopics({ conference = null, year = null } = {}) {
+    const scope = paperScope({ conference, year }, 'papers')
+    const clauses = [
+      ...scope.clauses,
+      "papers.data_status <> 'fetch_failed'",
+      'papers.abstract IS NOT NULL',
+      "length(trim(papers.abstract)) > 0",
+      "keyword.type = 'text'",
+      "length(trim(CAST(keyword.value AS TEXT))) > 0"
+    ]
+    const row = this.db.prepare(`
+      SELECT COUNT(DISTINCT lower(trim(CAST(keyword.value AS TEXT)))) AS count
+      FROM papers
+      JOIN json_each(
+        CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+      ) AS keyword
+      WHERE ${clauses.join(' AND ')}
+    `).get(...scope.params)
+    return Number(row.count)
+  }
+
+  getOverviewStats({ conference = null, year = null, now = new Date(), freshnessHours = 24 } = {}) {
+    const scope = paperScope({ conference, year })
+    const where = scope.clauses.length ? `WHERE ${scope.clauses.join(' AND ')}` : ''
+    const aggregate = this.db.prepare(`
+      SELECT
+        COUNT(*) AS papers,
+        COUNT(DISTINCT conference) AS conferences,
+        COALESCE(SUM(CASE WHEN data_status = 'complete' THEN 1 ELSE 0 END), 0) AS complete,
+        COALESCE(SUM(CASE WHEN data_status = 'missing_fields' THEN 1 ELSE 0 END), 0) AS missing_fields,
+        COALESCE(SUM(CASE WHEN data_status = 'fetch_failed' THEN 1 ELSE 0 END), 0) AS fetch_failed
+      FROM papers
+      ${where}
+    `).get(...scope.params)
+    const latestRow = this.db.prepare(`
+      SELECT updated_at, retrieved_at
+      FROM papers
+      ${where}
+      ORDER BY
+        CASE WHEN updated_at >= retrieved_at THEN updated_at ELSE retrieved_at END DESC,
+        paper_id ASC
+      LIMIT 1
+    `).get(...scope.params)
+    const paperCount = Number(aggregate.papers)
+    const topicCount = this.countEligibleTopics({ conference, year })
+    let previousPaperCount = null
+    let previousTopicCount = null
+    if (year) {
+      const previousScope = paperScope({ conference, year: year - 1 })
+      const previousWhere = previousScope.clauses.length ? `WHERE ${previousScope.clauses.join(' AND ')}` : ''
+      previousPaperCount = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM papers ${previousWhere}`).get(...previousScope.params).count)
+      previousTopicCount = this.countEligibleTopics({ conference, year: year - 1 })
+    }
+    const lastSyncValue = latestPaperTimestamp(latestRow)
+    const lastSyncTime = lastSyncValue ? Date.parse(lastSyncValue) : Number.NaN
+    const nowTime = now instanceof Date ? now.getTime() : Date.parse(now)
+    const recentThreshold = freshnessHours * 60 * 60 * 1000
+    const lastSyncStatus = !lastSyncValue
+      ? 'empty'
+      : Number.isFinite(lastSyncTime) && Number.isFinite(nowTime) && nowTime - lastSyncTime <= recentThreshold
+        ? 'up-to-date'
+        : 'stale'
+
+    return {
+      scope: { conference, year },
+      papers: {
+        value: paperCount,
+        previous_value: previousPaperCount,
+        delta_percent: year ? percentageChange(paperCount, previousPaperCount) : null
+      },
+      topics: {
+        value: topicCount,
+        previous_value: previousTopicCount,
+        delta_percent: year ? percentageChange(topicCount, previousTopicCount) : null
+      },
+      conferences: { value: Number(aggregate.conferences) },
+      data_quality: {
+        complete: Number(aggregate.complete),
+        missing_fields: Number(aggregate.missing_fields),
+        fetch_failed: Number(aggregate.fetch_failed),
+        complete_percent: paperCount ? Number(((Number(aggregate.complete) / paperCount) * 100).toFixed(1)) : 0
+      },
+      last_sync: { value: lastSyncValue, status: lastSyncStatus }
+    }
+  }
+
+  getPaperFacets() {
+    return {
+      conferences: this.db.prepare(`
+        SELECT DISTINCT conference FROM papers
+        WHERE conference IS NOT NULL
+        ORDER BY conference ASC
+      `).all().map((row) => row.conference),
+      years: this.db.prepare(`
+        SELECT DISTINCT year FROM papers
+        WHERE year IS NOT NULL
+        ORDER BY year DESC
+      `).all().map((row) => Number(row.year))
+    }
+  }
+
+  listRecentPapers({ conference = null, year = null, limit = 4 } = {}) {
+    const scope = paperScope({ conference, year })
+    const where = scope.clauses.length ? `WHERE ${scope.clauses.join(' AND ')}` : ''
+    const rows = this.db.prepare(`
+      SELECT paper_id, title, authors_json, conference, year, keywords_json, data_status, updated_at
+      FROM papers
+      ${where}
+      ORDER BY updated_at DESC, title COLLATE NOCASE ASC, paper_id ASC
+      LIMIT ?
+    `).all(...scope.params, limit)
+    return rows.map((row) => ({
+      paper_id: row.paper_id,
+      title: row.title,
+      authors: json(row.authors_json),
+      conference: row.conference,
+      year: row.year,
+      keywords: json(row.keywords_json),
+      data_status: row.data_status,
+      updated_at: row.updated_at
+    }))
   }
 
   saveCandidates(candidates, ttlSeconds) {

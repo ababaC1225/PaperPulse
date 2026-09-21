@@ -1,9 +1,12 @@
-// Placeholder data layer - swap with real DB queries when the data pipeline lands.
-export function getOverviewStats(req, res) {
-  res.json({
-    papers: { value: 4892, delta: '+12% vs 2024' },
-    topics: { value: 186, delta: '+8% vs 2024' },
-    conferences: { value: 12, delta: '+0% vs last year' },
-    lastSync: { value: '2 hours ago', status: 'up-to-date' }
-  })
+import { optionalConference, optionalYear } from '../lib/paperQuery.js'
+
+export function createGetOverviewStats({ repository }) {
+  return function getOverviewStats(request, response, next) {
+    try {
+      response.json(repository.getOverviewStats({
+        conference: optionalConference(request.query.conference),
+        year: optionalYear(request.query.year)
+      }))
+    } catch (error) { next(error) }
+  }
 }

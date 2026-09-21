@@ -20,7 +20,7 @@ const sparkColors = {
 </script>
 
 <template>
-  <div class="card stat-card">
+  <div class="card stat-card" :class="`stat-${stat.key}`">
     <div class="stat-top">
       <span class="stat-icon" :class="`tone-${stat.tone}`">
         <component :is="icons[stat.icon]" :size="19" />
@@ -31,9 +31,9 @@ const sparkColors = {
     <div class="stat-body">
       <div>
         <div class="stat-value">{{ stat.value }}</div>
-        <div class="stat-delta" :class="{ positive: stat.deltaPositive }">
+        <div class="stat-delta" :class="[stat.deltaTone, { positive: stat.deltaPositive }]">
           <TrendingUp v-if="stat.key !== 'sync'" :size="13" />
-          <span v-else class="status-dot"></span>
+          <span v-else class="status-dot" :class="stat.status"></span>
           {{ stat.delta }}
         </div>
       </div>
@@ -115,6 +115,13 @@ const sparkColors = {
   line-height: 1.2;
 }
 
+.stat-sync .stat-value {
+  overflow: hidden;
+  font-size: 23px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .stat-delta {
   display: flex;
   align-items: center;
@@ -128,6 +135,14 @@ const sparkColors = {
   color: var(--green);
 }
 
+.stat-delta.negative {
+  color: #c94b68;
+}
+
+.stat-delta.neutral {
+  color: var(--text-secondary);
+}
+
 .stat-delta .lucide {
   display: none;
 }
@@ -138,6 +153,9 @@ const sparkColors = {
   border-radius: 50%;
   background: var(--green);
 }
+
+.status-dot.stale { background: var(--orange); }
+.status-dot.empty { background: var(--text-muted); }
 
 .bars {
   display: flex;

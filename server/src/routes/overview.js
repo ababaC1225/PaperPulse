@@ -1,8 +1,10 @@
 import { Router } from 'express'
-import { getOverviewStats } from '../controllers/overviewController.js'
+import { createGetOverviewStats } from '../controllers/overviewController.js'
 
-const router = Router()
+export function createOverviewRouter(context) {
+  const router = Router()
 
-router.get('/stats', getOverviewStats)
+  router.get('/stats', createGetOverviewStats(context))
 
-export default router
+  return router
+}

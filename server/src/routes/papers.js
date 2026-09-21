@@ -1,14 +1,7 @@
 import { Router } from 'express'
-import { canonicalizeConference, normalizeYear } from '../domain/cleaning.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
+import { boundedInteger, optionalConference, optionalYear } from '../lib/paperQuery.js'
 import { PAPER_SORTS } from '../persistence/paperRepository.js'
-
-function boundedInteger(value, fallback, min, max, label) {
-  if (value == null || value === '') return fallback
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new ValidationError(`${label} must be an integer between ${min} and ${max}`)
-  return parsed
-}
 
 function boundedText(value, { label, maximum = 500, lowercase = false } = {}) {
   if (value == null) return ''
@@ -31,13 +24,20 @@ export function createPapersRouter({ repository, searchService, importService, p
     } catch (error) { next(error) }
   })
 
+  router.get('/facets', (_request, response) => response.json(repository.getPaperFacets()))
+
+  router.get('/recent', (request, response, next) => {
+    try {
+      response.json(repository.listRecentPapers({
+        conference: optionalConference(request.query.conference),
+        year: optionalYear(request.query.year),
+        limit: boundedInteger(request.query.limit, 4, 1, 20, 'Limit')
+      }))
+    } catch (error) { next(error) }
+  })
+
   router.get('/', (request, response, next) => {
     try {
-      const conferenceInput = request.query.conference
-      const conference = conferenceInput ? canonicalizeConference(conferenceInput) : null
-      if (conferenceInput && !conference) throw new ValidationError('Conference must be CVPR, ICCV, or ECCV')
-      const year = request.query.year ? normalizeYear(request.query.year) : null
-      if (request.query.year && !year) throw new ValidationError('Year is invalid')
       const status = request.query.data_status || request.query.status || null
       if (status && !['complete', 'missing_fields', 'fetch_failed'].includes(status)) {
         throw new ValidationError('Status must be complete, missing_fields, or fetch_failed')
@@ -48,8 +48,8 @@ export function createPapersRouter({ repository, searchService, importService, p
       }
       response.json(repository.listPapers({
         query: boundedText(request.query.query, { label: 'Query' }),
-        conference,
-        year,
+        conference: optionalConference(request.query.conference),
+        year: optionalYear(request.query.year),
         dataStatus: status,
         sourceName: boundedText(request.query.source_name, { label: 'Source name', maximum: 100, lowercase: true }) || null,
         sort,
@@ -58,8 +58,6 @@ export function createPapersRouter({ repository, searchService, importService, p
       }))
     } catch (error) { next(error) }
   })
-
-  router.get('/recent', (_request, response) => response.json(repository.listPapers({ limit: 10 }).items))
 
   router.post('/import', (request, response, next) => {
     try {
