@@ -109,6 +109,7 @@ GET  /api/overview/stats?conference=&year=
 GET  /api/topics/hot?conference=&year=&query=&sort=&limit=
 GET  /api/topics/:topic?conference=&year=&paper_limit=
 GET  /api/topics/network?conference=&year=&max_nodes=&min_node_count=&min_edge_count=&max_edges=&focus=
+GET  /api/topics/trends?topic=&topic=&conference=&conference=&start_year=&end_year=&metric=
 GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
 GET  /api/papers/facets
 GET  /api/papers/recent?conference=&year=&limit=
@@ -192,6 +193,34 @@ For a focused network, the focus node is retained even when its count is below `
 The current SQLite implementation expands each eligible paper into distinct keywords and then self-joins those keywords to form pairs. Pair generation is quadratic in the number of keywords on one paper, so unusually large keyword arrays or very large corpora may require precomputed aggregate tables or a background analysis job. Thresholds and response limits bound output size but do not eliminate that intermediate work.
 
 Keyword frequency and co-occurrence are descriptive. They do not imply academic quality, semantic equivalence, importance, or causality.
+
+### Multi-year topic trends and conference comparison
+
+`GET /api/topics/trends` compares exact normalized keywords across CVPR, ICCV, and ECCV using one consistent paper unit. Topics and conferences use repeated query parameters rather than comma-separated values:
+
+```text
+GET /api/topics/trends?topic=diffusion%20model&topic=vision%20language%20model&conference=CVPR&conference=ICCV&start_year=2021&end_year=2025&metric=share
+```
+
+`topic` accepts one to five unique normalized keywords. Duplicate topics are removed in first-requested order. Each value must normalize to exactly one complete keyword; substring matching inside stored JSON is never used. Requested topics with no eligible occurrence in the selected conference/year scope are returned in `unknown_topics` and omitted from `series`; the API never substitutes another topic. `conference` accepts CVPR, ICCV, and ECCV, removes duplicates, and always returns them in canonical CVPR/ICCV/ECCV order. `metric` is `count` or `share` and defaults to `share`.
+
+When topics are omitted, the API selects up to four topics ranked by aggregate distinct eligible-paper count over the requested conference/year scope, with topic name as the deterministic tie-breaker. When conferences are omitted, all three supported conferences are used. When both year boundaries are omitted, the range starts at the oldest of the latest five represented eligible publication years and ends at the latest represented year. The range includes every intervening calendar year and is capped to the latest 15-calendar-year window if those represented years are unusually sparse. An empty database uses the current UTC year and preceding four years. If only `start_year` is supplied, `end_year = start_year + 4`; if only `end_year` is supplied, `start_year = end_year - 4`. Derived years must pass the same year validation as explicit years. Start must not exceed end, and an inclusive range may contain at most 15 calendar years.
+
+Analysis eligibility is unchanged: a paper must have a non-empty abstract, at least one non-empty keyword, and a status other than `fetch_failed`. For every requested topic, conference, and calendar year:
+
+```text
+paper_count = distinct eligible papers containing the exact normalized keyword
+eligible_paper_total = all eligible papers in the same conference/year
+share_percent = paper_count / eligible_paper_total * 100
+```
+
+Shares are rounded to one decimal place. A positive denominator with no topic occurrence is a genuine observation with `paper_count: 0`, `share_percent: 0`, and `has_data: true`. A conference/year with no eligible papers is unavailable and returns `paper_count: 0`, `eligible_paper_total: 0`, `share_percent: null`, and `has_data: false`. The complete topic × conference × calendar-year matrix is returned, allowing clients to break lines at missing data without hiding real zero values.
+
+Series are grouped by normalized topic order and then canonical conference order; years are ascending. The summary peak considers only `has_data: true` points and uses paper count for `metric=count` or normalized share for `metric=share`. Ties resolve by later year, then conference name, then topic name. `latest_year_with_data` is the latest valid matrix year. If no valid point exists, both peak and latest data year are `null`. Source names and the latest relevant record timestamp are included when available.
+
+The Trend Analysis page obtains topic candidates from the live hot-topic endpoint for every selected conference/year, applies the filters through the trends endpoint, and preserves the previous chart while refreshing. Play reveals existing years chronologically, pause freezes the visible year, and replay returns to the first year before advancing. Animation never creates or extrapolates points. Color identifies topics while line patterns and marker shapes identify conferences; unavailable years break lines, and an accessible table exposes all source counts.
+
+These metrics are descriptive database frequencies. They are not forecasts, measures of paper quality, evidence of academic importance, or proof of causal relationships. Comparisons also inherit differences in source coverage and the availability of abstracts and author keywords.
 
 ### Paper Library search and pagination
 

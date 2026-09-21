@@ -2,7 +2,8 @@ import { Router } from 'express'
 import {
   createGetHotTopics,
   createGetKeywordNetwork,
-  createGetTopicDetail
+  createGetTopicDetail,
+  createGetTopicTrends
 } from '../controllers/topicsController.js'
 
 export function createTopicsRouter(context) {
@@ -10,6 +11,7 @@ export function createTopicsRouter(context) {
 
   router.get('/hot', createGetHotTopics(context))
   router.get('/network', createGetKeywordNetwork(context))
+  router.get('/trends', createGetTopicTrends(context))
   router.get('/:topic', createGetTopicDetail(context))
 
   return router

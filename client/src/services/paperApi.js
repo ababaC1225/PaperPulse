@@ -19,7 +19,13 @@ const jsonOptions = (method, body) => ({
 })
 
 function withQuery(path, params = {}) {
-  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== ''))
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    const values = Array.isArray(value) ? value : [value]
+    for (const entry of values) {
+      if (entry != null && entry !== '') query.append(key, entry)
+    }
+  }
   const suffix = query.toString()
   return suffix ? `${path}?${suffix}` : path
 }
@@ -33,6 +39,7 @@ export const paperApi = {
   overviewStats(params = {}) { return request(withQuery('/api/overview/stats', params)) },
   hotTopics(params = {}) { return request(withQuery('/api/topics/hot', params)) },
   keywordNetwork(params = {}) { return request(withQuery('/api/topics/network', params)) },
+  topicTrends(params = {}) { return request(withQuery('/api/topics/trends', params)) },
   topicDetail(topic, params = {}) {
     return request(withQuery(`/api/topics/${encodeURIComponent(topic)}`, params))
   },

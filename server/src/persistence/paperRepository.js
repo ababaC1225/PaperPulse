@@ -51,6 +51,20 @@ function eligiblePaperScope({ conference = null, year = null } = {}, table = 'pa
   }
 }
 
+function trendEligibleScope({ conferences, startYear, endYear }, table = 'papers') {
+  const scope = eligiblePaperScope({}, table)
+  const prefix = table ? `${table}.` : ''
+  const conferencePlaceholders = conferences.map(() => '?').join(', ')
+  return {
+    clauses: [
+      ...scope.clauses,
+      `${prefix}conference IN (${conferencePlaceholders})`,
+      `${prefix}year BETWEEN ? AND ?`
+    ],
+    params: [...conferences, startYear, endYear]
+  }
+}
+
 function percentageChange(value, previousValue) {
   if (previousValue === 0) return null
   return Number((((value - previousValue) / previousValue) * 100).toFixed(1))
@@ -400,6 +414,178 @@ export class PaperRepository {
         previous_paper_count: previousYear ? Number(row.previous_paper_count) : null,
         growth_percent: row.growth_percent == null ? null : Number(row.growth_percent)
       }))
+    }
+  }
+
+  listEligibleTrendYears({ conferences, limit = 5 } = {}) {
+    const scope = eligiblePaperScope({}, 'papers')
+    const conferencePlaceholders = conferences.map(() => '?').join(', ')
+    return this.db.prepare(`
+      SELECT DISTINCT papers.year
+      FROM papers
+      WHERE ${scope.clauses.join(' AND ')}
+        AND papers.conference IN (${conferencePlaceholders})
+        AND papers.year IS NOT NULL
+      ORDER BY papers.year DESC
+      LIMIT ?
+    `).all(...conferences, limit).map((row) => Number(row.year))
+  }
+
+  listTopTrendTopics({ conferences, startYear, endYear, limit = 4 } = {}) {
+    const scope = trendEligibleScope({ conferences, startYear, endYear }, 'papers')
+    return this.db.prepare(`
+      WITH eligible_topics AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${scope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      )
+      SELECT topic, COUNT(*) AS paper_count
+      FROM eligible_topics
+      GROUP BY topic
+      ORDER BY paper_count DESC, topic COLLATE NOCASE ASC
+      LIMIT ?
+    `).all(...scope.params, limit).map((row) => row.topic)
+  }
+
+  getTopicTrends({ topics, conferences, startYear, endYear, metric = 'share' } = {}) {
+    const scope = trendEligibleScope({ conferences, startYear, endYear }, 'papers')
+    const totalRows = this.db.prepare(`
+      SELECT papers.conference, papers.year, COUNT(*) AS eligible_paper_total
+      FROM papers
+      WHERE ${scope.clauses.join(' AND ')}
+      GROUP BY papers.conference, papers.year
+    `).all(...scope.params)
+
+    const topicPlaceholders = topics.map(() => '?').join(', ')
+    const topicRows = topics.length
+      ? this.db.prepare(`
+        WITH eligible_topics AS (
+          SELECT DISTINCT
+            papers.paper_id,
+            papers.conference,
+            papers.year,
+            lower(trim(CAST(keyword.value AS TEXT))) AS topic
+          FROM papers
+          JOIN json_each(
+            CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+          ) AS keyword
+          WHERE ${scope.clauses.join(' AND ')}
+            AND keyword.type = 'text'
+            AND lower(trim(CAST(keyword.value AS TEXT))) IN (${topicPlaceholders})
+        )
+        SELECT topic, conference, year, COUNT(*) AS paper_count
+        FROM eligible_topics
+        GROUP BY topic, conference, year
+      `).all(...scope.params, ...topics)
+      : []
+
+    const sourceRows = this.db.prepare(`
+      SELECT DISTINCT papers.source_name
+      FROM papers
+      WHERE ${scope.clauses.join(' AND ')}
+        AND papers.source_name IS NOT NULL
+        AND length(trim(papers.source_name)) > 0
+      ORDER BY papers.source_name COLLATE NOCASE ASC
+    `).all(...scope.params)
+    const timestampRow = this.db.prepare(`
+      SELECT MAX(
+        CASE
+          WHEN COALESCE(papers.updated_at, '') >= COALESCE(papers.retrieved_at, '')
+            THEN papers.updated_at
+          ELSE papers.retrieved_at
+        END
+      ) AS latest_updated_at
+      FROM papers
+      WHERE ${scope.clauses.join(' AND ')}
+    `).get(...scope.params)
+
+    const totals = new Map(totalRows.map((row) => [
+      `${row.conference}\u0000${row.year}`,
+      Number(row.eligible_paper_total)
+    ]))
+    const counts = new Map(topicRows.map((row) => [
+      `${row.topic}\u0000${row.conference}\u0000${row.year}`,
+      Number(row.paper_count)
+    ]))
+    const knownTopicSet = new Set(topicRows.map((row) => row.topic))
+    const knownTopics = topics.filter((topic) => knownTopicSet.has(topic))
+    const unknownTopics = topics.filter((topic) => !knownTopicSet.has(topic))
+    const years = Array.from(
+      { length: endYear - startYear + 1 },
+      (_unused, index) => startYear + index
+    )
+
+    const series = knownTopics.flatMap((topic) => conferences.map((conference) => ({
+      topic,
+      conference,
+      points: years.map((year) => {
+        const eligiblePaperTotal = totals.get(`${conference}\u0000${year}`) || 0
+        const paperCount = counts.get(`${topic}\u0000${conference}\u0000${year}`) || 0
+        return {
+          year,
+          paper_count: paperCount,
+          eligible_paper_total: eligiblePaperTotal,
+          share_percent: eligiblePaperTotal
+            ? Number(((paperCount / eligiblePaperTotal) * 100).toFixed(1))
+            : null,
+          has_data: eligiblePaperTotal > 0
+        }
+      })
+    })))
+
+    const validPoints = series.flatMap((entry) => entry.points
+      .filter((point) => point.has_data)
+      .map((point) => ({ topic: entry.topic, conference: entry.conference, ...point })))
+    const valueFor = (point) => metric === 'count' ? point.paper_count : point.share_percent
+    const peak = validPoints.length
+      ? [...validPoints].sort((left, right) => (
+        valueFor(right) - valueFor(left)
+        || right.year - left.year
+        || compareTopics(left.conference, right.conference)
+        || compareTopics(left.topic, right.topic)
+      ))[0]
+      : null
+
+    return {
+      scope: {
+        topics,
+        conferences,
+        start_year: startYear,
+        end_year: endYear,
+        metric
+      },
+      years,
+      series,
+      unknown_topics: unknownTopics,
+      summary: {
+        peak: peak ? {
+          topic: peak.topic,
+          conference: peak.conference,
+          year: peak.year,
+          paper_count: peak.paper_count,
+          share_percent: peak.share_percent
+        } : null,
+        latest_year_with_data: validPoints.length
+          ? Math.max(...validPoints.map((point) => point.year))
+          : null
+      },
+      data_context: {
+        source_names: sourceRows.map((row) => row.source_name),
+        latest_updated_at: timestampRow.latest_updated_at || null
+      },
+      methodology: {
+        paper_unit: 'distinct eligible papers containing an exact normalized keyword',
+        share_formula: 'paper_count / eligible_paper_total * 100',
+        missing_data_rule: 'A conference-year with no eligible papers is unavailable, not zero share.',
+        warning: 'Frequency and normalized share are descriptive signals, not measures of academic quality or causality.'
+      }
     }
   }
 
