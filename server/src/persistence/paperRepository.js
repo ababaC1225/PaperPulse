@@ -1,6 +1,20 @@
 import crypto from 'node:crypto'
-import { analysisEligibility } from '../domain/cleaning.js'
+import { analysisEligibility, normalizeTitle } from '../domain/cleaning.js'
 import { openDatabase } from './database.js'
+
+export const PAPER_SORTS = Object.freeze({
+  updated_desc: 'updated_at DESC, paper_id ASC',
+  updated_asc: 'updated_at ASC, paper_id ASC',
+  title_asc: 'title COLLATE NOCASE ASC, paper_id ASC',
+  title_desc: 'title COLLATE NOCASE DESC, paper_id ASC',
+  year_desc: 'year IS NULL ASC, year DESC, title COLLATE NOCASE ASC, paper_id ASC',
+  year_asc: 'year IS NULL ASC, year ASC, title COLLATE NOCASE ASC, paper_id ASC'
+})
+
+function containsPattern(value) {
+  const escaped = String(value).replace(/[\\%_]/gu, (character) => `\\${character}`)
+  return `%${escaped}%`
+}
 
 function json(value, fallback = []) {
   if (value == null) return fallback
@@ -161,21 +175,50 @@ export class PaperRepository {
     return rowToPaper(this.db.prepare('SELECT * FROM papers WHERE paper_id = ?').get(paperId))
   }
 
-  listPapers({ query = '', conference = null, year = null, status = null, limit = 50, offset = 0 } = {}) {
+  listPapers({
+    query = '', conference = null, year = null, status = null, dataStatus = null,
+    sourceName = null, sort = 'updated_desc', limit = 20, offset = 0
+  } = {}) {
     const clauses = []
     const params = []
-    if (query) {
-      clauses.push('(normalized_title LIKE ? OR title LIKE ? OR authors_json LIKE ?)')
-      const wildcard = `%${query}%`
-      params.push(wildcard, wildcard, wildcard)
+    const trimmedQuery = String(query).trim()
+    if (trimmedQuery) {
+      const rawPattern = containsPattern(trimmedQuery)
+      const normalizedQuery = normalizeTitle(trimmedQuery)
+      const queryClauses = [
+        "paper_id LIKE ? ESCAPE '\\'",
+        "title LIKE ? ESCAPE '\\'",
+        "authors_json LIKE ? ESCAPE '\\'",
+        "keywords_json LIKE ? ESCAPE '\\'"
+      ]
+      params.push(rawPattern, rawPattern, rawPattern, rawPattern)
+      if (normalizedQuery) {
+        queryClauses.push("normalized_title LIKE ? ESCAPE '\\'")
+        params.push(containsPattern(normalizedQuery))
+      }
+      clauses.push(`(${queryClauses.join(' OR ')})`)
     }
     if (conference) { clauses.push('conference = ?'); params.push(conference) }
     if (year) { clauses.push('year = ?'); params.push(year) }
-    if (status) { clauses.push('data_status = ?'); params.push(status) }
+    const statusFilter = dataStatus || status
+    if (statusFilter) { clauses.push('data_status = ?'); params.push(statusFilter) }
+    if (sourceName) { clauses.push('source_name = ? COLLATE NOCASE'); params.push(sourceName) }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-    const total = this.db.prepare(`SELECT COUNT(*) AS count FROM papers ${where}`).get(...params).count
-    const rows = this.db.prepare(`SELECT * FROM papers ${where} ORDER BY retrieved_at DESC, title ASC LIMIT ? OFFSET ?`).all(...params, limit, offset)
-    return { items: rows.map(rowToPaper), total, limit, offset }
+    const orderBy = PAPER_SORTS[sort] || PAPER_SORTS.updated_desc
+    const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM papers ${where}`).get(...params).count)
+    const rows = this.db.prepare(`SELECT * FROM papers ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).all(...params, limit, offset)
+    const page = Math.floor(offset / limit) + 1
+    const pageCount = Math.ceil(total / limit)
+    return {
+      items: rows.map(rowToPaper),
+      total,
+      limit,
+      offset,
+      page,
+      page_count: pageCount,
+      has_previous: offset > 0,
+      has_next: offset + limit < total
+    }
   }
 
   saveCandidates(candidates, ttlSeconds) {

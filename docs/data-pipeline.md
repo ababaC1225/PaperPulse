@@ -105,8 +105,36 @@ DELETE /api/papers/:paperId
 POST /api/imports                         { "content": "...", "format": "txt|csv" }
 GET  /api/imports/:jobId
 POST /api/imports/:jobId/retry
-GET  /api/papers?query=&conference=&year=&status=&limit=&offset=
+GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
 GET  /api/papers/:paperId
+```
+
+`GET /api/papers` performs all Paper Library search, filtering, sorting, and pagination on the server. `query` is a case-insensitive contains search across paper ID, display title, normalized title, authors, and keywords. Literal `%`, `_`, and backslash characters are escaped before the parameterized SQLite query is executed. `conference` accepts `CVPR`, `ICCV`, or `ECCV`; `data_status` accepts `complete`, `missing_fields`, or `fetch_failed`; `source_name` is an exact case-insensitive source-name filter. The legacy `status` parameter remains accepted as an alias for `data_status`.
+
+The accepted `sort` values are fixed names mapped to trusted SQL fragments:
+
+| Sort value | Order |
+| --- | --- |
+| `updated_desc` | Recently updated first (default) |
+| `updated_asc` | Oldest updated first |
+| `title_asc` | Title A–Z |
+| `title_desc` | Title Z–A |
+| `year_desc` | Newest publication year first |
+| `year_asc` | Oldest publication year first |
+
+The default page size is 20; `limit` accepts 1–200 and `offset` accepts 0–1,000,000. The response includes the current items and complete pagination state:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 20,
+  "offset": 0,
+  "page": 1,
+  "page_count": 0,
+  "has_previous": false,
+  "has_next": false
+}
 ```
 
 The compatibility endpoint `POST /api/papers/import` starts the same batch workflow.
@@ -121,7 +149,7 @@ npm run cli -- summary <job-id>
 
 ## Tests and fixtures
 
-`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, and every required API workflow.
+`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
 
 ## Known limitations
 

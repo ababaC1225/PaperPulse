@@ -1,12 +1,20 @@
 import { Router } from 'express'
 import { canonicalizeConference, normalizeYear } from '../domain/cleaning.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
+import { PAPER_SORTS } from '../persistence/paperRepository.js'
 
 function boundedInteger(value, fallback, min, max, label) {
   if (value == null || value === '') return fallback
-  const parsed = Number.parseInt(value, 10)
+  const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new ValidationError(`${label} must be an integer between ${min} and ${max}`)
   return parsed
+}
+
+function boundedText(value, { label, maximum = 500, lowercase = false } = {}) {
+  if (value == null) return ''
+  const text = String(value).trim()
+  if (text.length > maximum) throw new ValidationError(`${label} must be ${maximum} characters or fewer`)
+  return lowercase ? text.toLocaleLowerCase('en-US') : text
 }
 
 export function createPapersRouter({ repository, searchService, importService, paperCrudService }) {
@@ -30,16 +38,22 @@ export function createPapersRouter({ repository, searchService, importService, p
       if (conferenceInput && !conference) throw new ValidationError('Conference must be CVPR, ICCV, or ECCV')
       const year = request.query.year ? normalizeYear(request.query.year) : null
       if (request.query.year && !year) throw new ValidationError('Year is invalid')
-      const status = request.query.status || null
+      const status = request.query.data_status || request.query.status || null
       if (status && !['complete', 'missing_fields', 'fetch_failed'].includes(status)) {
         throw new ValidationError('Status must be complete, missing_fields, or fetch_failed')
       }
+      const sort = String(request.query.sort || 'updated_desc')
+      if (!Object.hasOwn(PAPER_SORTS, sort)) {
+        throw new ValidationError(`Sort must be one of: ${Object.keys(PAPER_SORTS).join(', ')}`)
+      }
       response.json(repository.listPapers({
-        query: String(request.query.query || ''),
+        query: boundedText(request.query.query, { label: 'Query' }),
         conference,
         year,
-        status,
-        limit: boundedInteger(request.query.limit, 50, 1, 200, 'Limit'),
+        dataStatus: status,
+        sourceName: boundedText(request.query.source_name, { label: 'Source name', maximum: 100, lowercase: true }) || null,
+        sort,
+        limit: boundedInteger(request.query.limit, 20, 1, 200, 'Limit'),
         offset: boundedInteger(request.query.offset, 0, 0, 1_000_000, 'Offset')
       }))
     } catch (error) { next(error) }
