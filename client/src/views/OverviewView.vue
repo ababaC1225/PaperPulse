@@ -13,10 +13,12 @@ const selectedYear = ref('')
 const facets = ref({ conferences: [], years: [] })
 const overview = ref(null)
 const recentPapers = ref([])
+const hotTopicsResponse = ref(null)
 const loading = ref(false)
 const hasLoaded = ref(false)
 const facetsLoaded = ref(false)
 const loadError = ref('')
+const hotTopicsError = ref('')
 let requestSequence = 0
 
 const initialLoading = computed(() => loading.value && !hasLoaded.value)
@@ -29,6 +31,11 @@ const recentEmptyMessage = computed(() => {
   if (emptyDatabase.value) return 'No papers are stored yet.'
   if (emptyScope.value) return 'No papers match the selected conference and year.'
   return 'No recent papers are available.'
+})
+const hotTopicsEmptyMessage = computed(() => {
+  if (emptyDatabase.value) return 'No papers are stored yet.'
+  if (emptyScope.value) return 'No eligible topics match the selected conference and year.'
+  return 'No eligible topics are available.'
 })
 
 const numberFormatter = new Intl.NumberFormat('en-US')
@@ -95,16 +102,25 @@ async function loadDashboard({ includeFacets = false } = {}) {
   const requestId = ++requestSequence
   loading.value = true
   loadError.value = ''
+  hotTopicsError.value = ''
   try {
     const requests = [
       paperApi.overviewStats(currentParams()),
-      paperApi.recent({ ...currentParams(), limit: 4 })
+      paperApi.recent({ ...currentParams(), limit: 4 }),
+      paperApi.hotTopics({ ...currentParams(), sort: 'count', limit: 10 })
+        .then((value) => ({ value, error: null }))
+        .catch((error) => ({ value: null, error }))
     ]
     if (includeFacets) requests.push(paperApi.facets())
-    const [statsResult, recentResult, facetsResult] = await Promise.all(requests)
+    const [statsResult, recentResult, hotTopicsResult, facetsResult] = await Promise.all(requests)
     if (requestId !== requestSequence) return
     overview.value = statsResult
     recentPapers.value = recentResult
+    if (hotTopicsResult.error) {
+      hotTopicsError.value = `Live topics could not be refreshed: ${hotTopicsResult.error.message}`
+    } else {
+      hotTopicsResponse.value = hotTopicsResult.value
+    }
     if (facetsResult) {
       facets.value = facetsResult
       facetsLoaded.value = true
@@ -178,7 +194,14 @@ onBeforeUnmount(() => { requestSequence += 1 })
     <p v-else-if="emptyScope" class="scope-note">No papers match the selected conference and year.</p>
 
     <div class="mid-grid">
-      <HotTopicsCard />
+      <HotTopicsCard
+        :topics="hotTopicsResponse?.items || []"
+        :loading="initialLoading && !hotTopicsResponse"
+        :error="hotTopicsError"
+        :empty-message="hotTopicsEmptyMessage"
+        :baseline-year="hotTopicsResponse?.methodology?.growth_baseline_year"
+        @retry="refreshDashboard"
+      />
       <KeywordNetwork />
     </div>
 

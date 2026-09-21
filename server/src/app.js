@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { createOverviewRouter } from './routes/overview.js'
-import topicsRouter from './routes/topics.js'
+import { createTopicsRouter } from './routes/topics.js'
 import { createPapersRouter } from './routes/papers.js'
 import { createImportsRouter } from './routes/imports.js'
 import { AppError } from './lib/errors.js'
@@ -17,7 +17,7 @@ export function createApp(context) {
     response.json({ status: 'ok', service: 'paperpulse-server', time: new Date().toISOString() })
   })
   app.use('/api/overview', createOverviewRouter(context))
-  app.use('/api/topics', topicsRouter)
+  app.use('/api/topics', createTopicsRouter(context))
   app.use('/api/papers', createPapersRouter(context))
   app.use('/api/imports', createImportsRouter(context))
 

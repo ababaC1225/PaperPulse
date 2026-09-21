@@ -1,9 +1,16 @@
 import { Router } from 'express'
-import { getHotTopics, getKeywordNetwork } from '../controllers/topicsController.js'
+import {
+  createGetHotTopics,
+  createGetTopicDetail,
+  getKeywordNetwork
+} from '../controllers/topicsController.js'
 
-const router = Router()
+export function createTopicsRouter(context) {
+  const router = Router()
 
-router.get('/hot', getHotTopics)
-router.get('/network', getKeywordNetwork)
+  router.get('/hot', createGetHotTopics(context))
+  router.get('/network', getKeywordNetwork)
+  router.get('/:topic', createGetTopicDetail(context))
 
-export default router
+  return router
+}

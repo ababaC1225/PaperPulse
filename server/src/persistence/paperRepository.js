@@ -11,6 +11,12 @@ export const PAPER_SORTS = Object.freeze({
   year_asc: 'year IS NULL ASC, year ASC, title COLLATE NOCASE ASC, paper_id ASC'
 })
 
+export const HOT_TOPIC_SORTS = Object.freeze({
+  count: 'paper_count DESC, topic COLLATE NOCASE ASC',
+  share: 'share_percent DESC, paper_count DESC, topic COLLATE NOCASE ASC',
+  growth: 'growth_percent IS NULL ASC, growth_percent DESC, paper_count DESC, topic COLLATE NOCASE ASC'
+})
+
 function containsPattern(value) {
   const escaped = String(value).replace(/[\\%_]/gu, (character) => `\\${character}`)
   return `%${escaped}%`
@@ -23,6 +29,26 @@ function paperScope({ conference = null, year = null } = {}, table = '') {
   if (conference) { clauses.push(`${prefix}conference = ?`); params.push(conference) }
   if (year) { clauses.push(`${prefix}year = ?`); params.push(year) }
   return { clauses, params }
+}
+
+function eligiblePaperScope({ conference = null, year = null } = {}, table = 'papers') {
+  const scope = paperScope({ conference, year }, table)
+  const prefix = table ? `${table}.` : ''
+  return {
+    clauses: [
+      ...scope.clauses,
+      `${prefix}data_status <> 'fetch_failed'`,
+      `${prefix}abstract IS NOT NULL`,
+      `length(trim(${prefix}abstract)) > 0`,
+      `EXISTS (
+        SELECT 1
+        FROM json_each(CASE WHEN json_valid(${prefix}keywords_json) THEN ${prefix}keywords_json ELSE '[]' END) AS eligible_keyword
+        WHERE eligible_keyword.type = 'text'
+          AND length(trim(CAST(eligible_keyword.value AS TEXT))) > 0
+      )`
+    ],
+    params: scope.params
+  }
 }
 
 function percentageChange(value, previousValue) {
@@ -241,12 +267,9 @@ export class PaperRepository {
   }
 
   countEligibleTopics({ conference = null, year = null } = {}) {
-    const scope = paperScope({ conference, year }, 'papers')
+    const scope = eligiblePaperScope({ conference, year }, 'papers')
     const clauses = [
       ...scope.clauses,
-      "papers.data_status <> 'fetch_failed'",
-      'papers.abstract IS NOT NULL',
-      "length(trim(papers.abstract)) > 0",
       "keyword.type = 'text'",
       "length(trim(CAST(keyword.value AS TEXT))) > 0"
     ]
@@ -259,6 +282,234 @@ export class PaperRepository {
       WHERE ${clauses.join(' AND ')}
     `).get(...scope.params)
     return Number(row.count)
+  }
+
+  countEligiblePapers({ conference = null, year = null } = {}) {
+    const scope = eligiblePaperScope({ conference, year })
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM papers
+      WHERE ${scope.clauses.join(' AND ')}
+    `).get(...scope.params)
+    return Number(row.count)
+  }
+
+  listHotTopics({
+    conference = null, year = null, query = '', sort = 'count', limit = 10
+  } = {}) {
+    const currentScope = eligiblePaperScope({ conference, year }, 'papers')
+    const previousYear = year ? year - 1 : null
+    const previousScope = previousYear
+      ? eligiblePaperScope({ conference, year: previousYear }, 'papers')
+      : { clauses: ['0'], params: [] }
+    const eligiblePaperTotal = this.countEligiblePapers({ conference, year })
+    const normalizedQuery = normalizeTitle(query)
+    const topicFilter = normalizedQuery
+      ? "WHERE topic LIKE ? ESCAPE '\\'"
+      : ''
+    const topicFilterParams = normalizedQuery ? [containsPattern(normalizedQuery)] : []
+    const orderBy = HOT_TOPIC_SORTS[sort] || HOT_TOPIC_SORTS.count
+
+    const rows = this.db.prepare(`
+      WITH current_topics AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${currentScope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      ),
+      current_counts AS (
+        SELECT topic, COUNT(*) AS paper_count
+        FROM current_topics
+        ${topicFilter}
+        GROUP BY topic
+      ),
+      previous_topics AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${previousScope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      ),
+      previous_counts AS (
+        SELECT topic, COUNT(*) AS paper_count
+        FROM previous_topics
+        GROUP BY topic
+      ),
+      topic_metrics AS (
+        SELECT
+          current_counts.topic,
+          current_counts.paper_count,
+          CASE
+            WHEN ? = 0 THEN 0
+            ELSE round(current_counts.paper_count * 100.0 / ?, 1)
+          END AS share_percent,
+          COALESCE(previous_counts.paper_count, 0) AS previous_paper_count,
+          CASE
+            WHEN ? = 0 OR COALESCE(previous_counts.paper_count, 0) = 0 THEN NULL
+            ELSE round(
+              (current_counts.paper_count - previous_counts.paper_count) * 100.0
+              / previous_counts.paper_count,
+              1
+            )
+          END AS growth_percent
+        FROM current_counts
+        LEFT JOIN previous_counts ON previous_counts.topic = current_counts.topic
+      )
+      SELECT topic, paper_count, share_percent, previous_paper_count, growth_percent
+      FROM topic_metrics
+      ORDER BY ${orderBy}
+      LIMIT ?
+    `).all(
+      ...currentScope.params,
+      ...topicFilterParams,
+      ...previousScope.params,
+      eligiblePaperTotal,
+      eligiblePaperTotal,
+      previousYear ? 1 : 0,
+      limit
+    )
+
+    return {
+      scope: { conference, year },
+      methodology: {
+        unit: 'distinct eligible papers containing a normalized keyword',
+        eligible_paper_total: eligiblePaperTotal,
+        growth_baseline_year: previousYear,
+        causality_warning: 'Keyword co-occurrence and frequency do not imply research quality or causality.'
+      },
+      items: rows.map((row, index) => ({
+        rank: index + 1,
+        topic: row.topic,
+        paper_count: Number(row.paper_count),
+        share_percent: Number(row.share_percent),
+        previous_paper_count: previousYear ? Number(row.previous_paper_count) : null,
+        growth_percent: row.growth_percent == null ? null : Number(row.growth_percent)
+      }))
+    }
+  }
+
+  getTopicDetail({ topic, conference = null, year = null, paperLimit = 10 } = {}) {
+    const currentScope = eligiblePaperScope({ conference, year }, 'papers')
+    const topicCount = Number(this.db.prepare(`
+      SELECT COUNT(DISTINCT papers.paper_id) AS count
+      FROM papers
+      JOIN json_each(
+        CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+      ) AS keyword
+      WHERE ${currentScope.clauses.join(' AND ')}
+        AND keyword.type = 'text'
+        AND lower(trim(CAST(keyword.value AS TEXT))) = ?
+    `).get(...currentScope.params, topic).count)
+
+    if (topicCount === 0) return null
+
+    const eligiblePaperTotal = this.countEligiblePapers({ conference, year })
+    const previousYear = year ? year - 1 : null
+    let previousPaperCount = null
+    if (previousYear) {
+      const previousScope = eligiblePaperScope({ conference, year: previousYear }, 'papers')
+      previousPaperCount = Number(this.db.prepare(`
+        SELECT COUNT(DISTINCT papers.paper_id) AS count
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${previousScope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND lower(trim(CAST(keyword.value AS TEXT))) = ?
+      `).get(...previousScope.params, topic).count)
+    }
+
+    const trendScope = eligiblePaperScope({ conference, year: null }, 'papers')
+    const trend = this.db.prepare(`
+      WITH eligible AS (
+        SELECT papers.paper_id, papers.year, papers.keywords_json
+        FROM papers
+        WHERE ${trendScope.clauses.join(' AND ')}
+          AND papers.year IS NOT NULL
+      ),
+      yearly_totals AS (
+        SELECT year, COUNT(*) AS eligible_paper_total
+        FROM eligible
+        GROUP BY year
+      ),
+      topic_counts AS (
+        SELECT eligible.year, COUNT(DISTINCT eligible.paper_id) AS paper_count
+        FROM eligible
+        JOIN json_each(
+          CASE WHEN json_valid(eligible.keywords_json) THEN eligible.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE keyword.type = 'text'
+          AND lower(trim(CAST(keyword.value AS TEXT))) = ?
+        GROUP BY eligible.year
+      )
+      SELECT
+        yearly_totals.year,
+        COALESCE(topic_counts.paper_count, 0) AS paper_count,
+        yearly_totals.eligible_paper_total,
+        round(
+          COALESCE(topic_counts.paper_count, 0) * 100.0 / yearly_totals.eligible_paper_total,
+          1
+        ) AS share_percent
+      FROM yearly_totals
+      LEFT JOIN topic_counts ON topic_counts.year = yearly_totals.year
+      ORDER BY yearly_totals.year ASC
+    `).all(...trendScope.params, topic).map((row) => ({
+      year: Number(row.year),
+      paper_count: Number(row.paper_count),
+      eligible_paper_total: Number(row.eligible_paper_total),
+      share_percent: Number(row.share_percent)
+    }))
+
+    const relatedScope = eligiblePaperScope({ conference, year }, 'papers')
+    const relatedPapers = this.db.prepare(`
+      SELECT paper_id, title, authors_json, conference, year, updated_at
+      FROM papers
+      WHERE ${relatedScope.clauses.join(' AND ')}
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+          ) AS topic_keyword
+          WHERE topic_keyword.type = 'text'
+            AND lower(trim(CAST(topic_keyword.value AS TEXT))) = ?
+        )
+      ORDER BY year IS NULL ASC, year DESC, updated_at DESC, title COLLATE NOCASE ASC, paper_id ASC
+      LIMIT ?
+    `).all(...relatedScope.params, topic, paperLimit).map((row) => ({
+      paper_id: row.paper_id,
+      title: row.title,
+      authors: json(row.authors_json),
+      conference: row.conference,
+      year: row.year == null ? null : Number(row.year),
+      updated_at: row.updated_at
+    }))
+
+    return {
+      topic,
+      scope: { conference, year },
+      paper_count: topicCount,
+      share_percent: eligiblePaperTotal ? Number(((topicCount / eligiblePaperTotal) * 100).toFixed(1)) : 0,
+      previous_paper_count: previousPaperCount,
+      growth_percent: previousPaperCount == null ? null : percentageChange(topicCount, previousPaperCount),
+      trend,
+      trend_methodology: {
+        years: 'ascending years with at least one eligible paper in the selected conference scope',
+        missing_years: 'years without eligible papers are omitted; available years include a zero topic count'
+      },
+      related_papers: relatedPapers
+    }
   }
 
   getOverviewStats({ conference = null, year = null, now = new Date(), freshnessHours = 24 } = {}) {

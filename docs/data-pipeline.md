@@ -106,6 +106,9 @@ POST /api/imports                         { "content": "...", "format": "txt|csv
 GET  /api/imports/:jobId
 POST /api/imports/:jobId/retry
 GET  /api/overview/stats?conference=&year=
+GET  /api/topics/hot?conference=&year=&query=&sort=&limit=
+GET  /api/topics/:topic?conference=&year=&paper_limit=
+GET  /api/topics/network
 GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
 GET  /api/papers/facets
 GET  /api/papers/recent?conference=&year=&limit=
@@ -146,7 +149,27 @@ When a year is selected, paper and topic metrics compare with the preceding publ
 
 `GET /api/papers/facets` returns the distinct stored conferences and publication years, with years newest first. The Overview year selector uses this endpoint rather than a hard-coded year list.
 
-The Top 10 Hot Topics card and keyword-network visualization remain reference data in this milestone; their ranking and graph algorithms are separate future work.
+### Hot-topic analysis
+
+`GET /api/topics/hot` derives a ranked topic list from stored normalized keywords. It accepts optional `conference` (`CVPR`, `ICCV`, or `ECCV`), optional publication `year`, an optional case-insensitive topic-name substring `query`, `sort` (`count`, `share`, or `growth`), and `limit` (1–100, default 10). Query values are bound as SQLite parameters. Sort values select one of three fixed server-side SQL clauses and arbitrary client text is never interpolated into the query.
+
+The analysis unit is one distinct eligible paper containing one normalized keyword. A paper contributes at most once to a keyword even if malformed stored JSON repeats it. Eligibility is shared with the Overview analysis: the paper must have a non-empty abstract, at least one non-empty keyword, and `data_status` must not be `fetch_failed`.
+
+For each topic:
+
+- `paper_count` is the number of distinct eligible papers in the selected scope containing the exact normalized keyword.
+- `eligible_paper_total` is the number of all eligible papers in that scope.
+- `share_percent = paper_count / eligible_paper_total × 100`, rounded to one decimal place. An empty scope reports zero.
+- When a year is selected, `previous_paper_count` uses the preceding year with the same conference filter and `growth_percent = (paper_count - previous_paper_count) / previous_paper_count × 100`, rounded to one decimal place.
+- A zero previous-year count produces `growth_percent: null`; it is not represented as infinite or 100% growth. Without a selected year, both previous count and growth are `null`.
+
+Ranking is deterministic. Count order is paper count descending then topic ascending. Share order is share descending, paper count descending, then topic ascending. Growth order places numeric growth before null baselines, then uses growth descending, paper count descending, and topic ascending. Returned ranks reflect the filtered, sorted result.
+
+`GET /api/topics/:topic` normalizes the path as one complete keyword and uses exact keyword equality, never substring matching inside JSON. It returns the scoped count/share/growth metrics, supporting papers, and a yearly trend. Unknown topics in the selected scope return HTTP 404. `paper_limit` defaults to 10 and accepts 1–50. Related papers must be eligible and contain the exact keyword; they are ordered by publication year descending, update timestamp descending, title, and paper ID.
+
+The trend retains the optional conference filter but spans all publication years even when a display year is selected. It returns ascending years that contain at least one eligible paper in that conference scope. An available year is included with a zero topic count when appropriate; calendar years with no eligible papers are omitted. Every point includes the raw topic count, eligible-paper denominator, and normalized share.
+
+Topic frequency and keyword co-occurrence are descriptive database measures. They do not establish academic quality, importance, or causality. `GET /api/topics/network` remains an explicit placeholder; database-backed keyword co-occurrence is a later milestone.
 
 ### Paper Library search and pagination
 
@@ -190,7 +213,7 @@ npm run cli -- summary <job-id>
 
 ## Tests and fixtures
 
-`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
+`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, hot-topic formulas/filtering/sorting/exact detail matching/trends, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
 
 ## Known limitations
 
@@ -199,6 +222,7 @@ npm run cli -- summary <job-id>
 - DBLP is bibliographic fallback data and normally does not provide abstracts or keywords.
 - The ECVA index layout may cover different years unevenly.
 - Batch execution is an in-process worker. For durable automatic resume and multiple server replicas, replace it with a persistent queue and startup recovery policy.
+- The keyword-network endpoint is not database-backed yet; only hot-topic ranking and topic detail are live in this milestone.
 - SQLite uses Node's built-in `node:sqlite`, which is marked experimental in the current Node 22 runtime even though the exercised API is functional.
 
 ## Adding another source

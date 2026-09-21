@@ -31,6 +31,10 @@ export const paperApi = {
   facets() { return request('/api/papers/facets') },
   recent(params = {}) { return request(withQuery('/api/papers/recent', params)) },
   overviewStats(params = {}) { return request(withQuery('/api/overview/stats', params)) },
+  hotTopics(params = {}) { return request(withQuery('/api/topics/hot', params)) },
+  topicDetail(topic, params = {}) {
+    return request(withQuery(`/api/topics/${encodeURIComponent(topic)}`, params))
+  },
   get(paperId) { return request(`/api/papers/${encodeURIComponent(paperId)}`) },
   create(paper) { return request('/api/papers', jsonOptions('POST', paper)) },
   update(paperId, paper) { return request(`/api/papers/${encodeURIComponent(paperId)}`, jsonOptions('PATCH', paper)) },
