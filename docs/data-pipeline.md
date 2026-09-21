@@ -114,6 +114,7 @@ GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=
 GET  /api/papers/facets
 GET  /api/papers/recent?conference=&year=&limit=
 GET  /api/papers/:paperId
+GET  /api/papers/:paperId/context
 ```
 
 ### Overview metrics and recent papers
@@ -253,6 +254,46 @@ The default page size is 20; `limit` accepts 1–200 and `offset` accepts 0–1,
 ```
 
 The compatibility endpoint `POST /api/papers/import` starts the same batch workflow.
+
+### Paper detail context and recommendations
+
+`GET /api/papers/:paperId/context` returns the stored paper together with deterministic, database-backed analysis context. An unknown ID returns HTTP 404 and never substitutes another record. The response has this structure:
+
+```json
+{
+  "paper": {},
+  "data_quality": {
+    "status": "complete",
+    "missing_fields": [],
+    "retrieval_error": null,
+    "eligible": true,
+    "excluded_for": []
+  },
+  "primary_topic": {
+    "topic": "vision language",
+    "scope": { "conference": "CVPR", "year": 2025 },
+    "rank": 1,
+    "paper_count": 12,
+    "eligible_paper_total": 80,
+    "share_percent": 15,
+    "previous_paper_count": 8,
+    "growth_percent": 50
+  },
+  "related_keywords": [],
+  "related_papers": [],
+  "methodology": {}
+}
+```
+
+`paper` is the complete stored paper representation exposed by the ordinary detail endpoint. `data_quality` repeats the persisted quality state and the shared analysis-eligibility result so the client can distinguish unavailable fields from analysis exclusions. Malformed keyword, author, or missing-field JSON is represented safely as an empty array. The shared eligibility rule still requires a non-empty abstract, a JSON keyword array with at least one non-empty text keyword, and a state other than `fetch_failed`.
+
+The primary topic is selected only from the paper's normalized keywords. Candidates with statistics in the paper's conference/year scope sort by distinct eligible-paper count descending, then normalized topic name ascending. If no candidate has scoped statistics, the lexical first normalized keyword is retained with unavailable statistics. Rank, paper count, eligible-paper denominator, normalized share, previous-year count, and growth reuse the hot-topic analysis definitions. A paper with no usable keywords has `primary_topic: null`.
+
+Related keywords are the first five direct co-occurrence neighbors of the primary topic in the same topic scope. Ordering is co-occurrence count descending, Jaccard similarity descending, neighbor paper count descending, and topic ascending. Counts use exact normalized keyword equality and distinct eligible papers.
+
+Related papers are limited to three eligible records from the same conference and publication year that share at least one exact normalized keyword with the current paper. The current paper is always excluded. Results prioritize a primary-topic match, then shared-keyword count, title, and paper ID. Each result includes the paper, its exact shared keywords, the shared-keyword count, and whether it matches the primary topic. Missing conference, year, or keywords produces an empty recommendation list rather than a broader or fabricated fallback.
+
+The Paper Detail page consumes only this endpoint. It exposes loading, retry, not-found, incomplete-data, and retrieval-error states; links normalized keywords into the live Hot Topics analysis scope; and reloads context when its route ID changes. Keyword frequency, co-occurrence, and recommendations are descriptive database signals, not measures of paper quality or causality.
 
 ```powershell
 npm run cli -- search "Scalable Vision-Language Models"

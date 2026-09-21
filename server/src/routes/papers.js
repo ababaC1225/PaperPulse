@@ -81,6 +81,14 @@ export function createPapersRouter({ repository, searchService, importService, p
     } catch (error) { next(error) }
   })
 
+  router.get('/:paperId/context', (request, response, next) => {
+    try {
+      const context = repository.getPaperContext(request.params.paperId)
+      if (!context) throw new NotFoundError('Paper not found', { paper_id: request.params.paperId })
+      response.json(context)
+    } catch (error) { next(error) }
+  })
+
   router.get('/:paperId', (request, response, next) => {
     try {
       const paper = repository.getPaper(request.params.paperId)

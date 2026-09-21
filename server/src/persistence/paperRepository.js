@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { analysisEligibility, normalizeTitle } from '../domain/cleaning.js'
+import { analysisEligibility, normalizeKeywords, normalizeTitle } from '../domain/cleaning.js'
 import { openDatabase } from './database.js'
 
 export const PAPER_SORTS = Object.freeze({
@@ -40,6 +40,9 @@ function eligiblePaperScope({ conference = null, year = null } = {}, table = 'pa
       `${prefix}data_status <> 'fetch_failed'`,
       `${prefix}abstract IS NOT NULL`,
       `length(trim(${prefix}abstract)) > 0`,
+      `json_type(
+        CASE WHEN json_valid(${prefix}keywords_json) THEN ${prefix}keywords_json ELSE '[]' END
+      ) = 'array'`,
       `EXISTS (
         SELECT 1
         FROM json_each(CASE WHEN json_valid(${prefix}keywords_json) THEN ${prefix}keywords_json ELSE '[]' END) AS eligible_keyword
@@ -91,11 +94,14 @@ function stablePaperId(record) {
 
 function rowToPaper(row) {
   if (!row) return null
+  const keywords = json(row.keywords_json)
+  const authors = json(row.authors_json)
+  const missingFields = json(row.missing_fields_json)
   const paper = {
     ...row,
-    keywords: json(row.keywords_json),
-    authors: json(row.authors_json),
-    missing_fields: json(row.missing_fields_json)
+    keywords: Array.isArray(keywords) ? keywords : [],
+    authors: Array.isArray(authors) ? authors : [],
+    missing_fields: Array.isArray(missingFields) ? missingFields : []
   }
   delete paper.keywords_json
   delete paper.authors_json
@@ -236,6 +242,141 @@ export class PaperRepository {
 
   getPaper(paperId) {
     return rowToPaper(this.db.prepare('SELECT * FROM papers WHERE paper_id = ?').get(paperId))
+  }
+
+  getPaperContext(paperId) {
+    const paper = this.getPaper(paperId)
+    if (!paper) return null
+
+    const keywords = Array.isArray(paper.keywords)
+      ? normalizeKeywords(paper.keywords).sort(compareTopics)
+      : []
+    const topicAnalysis = this.listHotTopics({
+      conference: paper.conference,
+      year: paper.year,
+      sort: 'count',
+      limit: -1
+    })
+    const statisticsByTopic = new Map(topicAnalysis.items.map((item) => [item.topic, item]))
+    const primaryTopicName = [...keywords].sort((left, right) => {
+      const leftStats = statisticsByTopic.get(left)
+      const rightStats = statisticsByTopic.get(right)
+      return Number(Boolean(rightStats)) - Number(Boolean(leftStats))
+        || (rightStats?.paper_count || 0) - (leftStats?.paper_count || 0)
+        || compareTopics(left, right)
+    })[0] || null
+    const primaryStatistics = primaryTopicName ? statisticsByTopic.get(primaryTopicName) : null
+    const primaryTopic = primaryTopicName ? {
+      topic: primaryTopicName,
+      scope: { conference: paper.conference, year: paper.year },
+      rank: primaryStatistics?.rank ?? null,
+      paper_count: primaryStatistics?.paper_count ?? null,
+      eligible_paper_total: primaryStatistics
+        ? topicAnalysis.methodology.eligible_paper_total
+        : null,
+      share_percent: primaryStatistics?.share_percent ?? null,
+      previous_paper_count: primaryStatistics?.previous_paper_count ?? null,
+      growth_percent: primaryStatistics?.growth_percent ?? null
+    } : null
+
+    let relatedKeywords = []
+    if (primaryStatistics) {
+      const network = this.getKeywordNetwork({
+        conference: paper.conference,
+        year: paper.year,
+        focus: primaryTopicName,
+        maxNodes: 6,
+        minNodeCount: 1,
+        minEdgeCount: 1,
+        maxEdges: 100
+      })
+      if (network) {
+        const linkByTopic = new Map(network.links
+          .filter((link) => link.source === primaryTopicName || link.target === primaryTopicName)
+          .map((link) => [link.source === primaryTopicName ? link.target : link.source, link]))
+        relatedKeywords = network.nodes.slice(1, 6).map((node) => {
+          const link = linkByTopic.get(node.topic)
+          return {
+            topic: node.topic,
+            paper_count: node.paper_count,
+            share_percent: node.share_percent,
+            cooccurrence_count: link.cooccurrence_count,
+            jaccard_similarity: link.jaccard_similarity
+          }
+        })
+      }
+    }
+
+    let relatedPapers = []
+    if (paper.conference && paper.year && keywords.length) {
+      const scope = eligiblePaperScope({ conference: paper.conference, year: paper.year }, 'papers')
+      const placeholders = keywords.map(() => '?').join(', ')
+      const rows = this.db.prepare(`
+        SELECT
+          papers.*,
+          COUNT(DISTINCT lower(trim(CAST(shared_keyword.value AS TEXT)))) AS shared_keyword_count,
+          MAX(
+            CASE WHEN lower(trim(CAST(shared_keyword.value AS TEXT))) = ? THEN 1 ELSE 0 END
+          ) AS primary_topic_match
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS shared_keyword
+        WHERE ${scope.clauses.join(' AND ')}
+          AND papers.paper_id <> ?
+          AND shared_keyword.type = 'text'
+          AND lower(trim(CAST(shared_keyword.value AS TEXT))) IN (${placeholders})
+        GROUP BY papers.paper_id
+        ORDER BY
+          primary_topic_match DESC,
+          shared_keyword_count DESC,
+          papers.title COLLATE NOCASE ASC,
+          papers.paper_id ASC
+        LIMIT 3
+      `).all(
+        primaryTopicName || '',
+        ...scope.params,
+        paper.paper_id,
+        ...keywords
+      )
+      const keywordSet = new Set(keywords)
+      relatedPapers = rows.map((row) => {
+        const sharedKeywordCount = Number(row.shared_keyword_count)
+        const matchesPrimaryTopic = Boolean(row.primary_topic_match)
+        const relatedPaper = rowToPaper(row)
+        delete relatedPaper.shared_keyword_count
+        delete relatedPaper.primary_topic_match
+        return {
+          paper: relatedPaper,
+          shared_keywords: normalizeKeywords(relatedPaper.keywords)
+            .filter((topic) => keywordSet.has(topic))
+            .sort(compareTopics),
+          shared_keyword_count: sharedKeywordCount,
+          matches_primary_topic: matchesPrimaryTopic
+        }
+      })
+    }
+
+    return {
+      paper,
+      data_quality: {
+        status: paper.data_status,
+        missing_fields: paper.missing_fields,
+        retrieval_error: paper.retrieval_error,
+        eligible: paper.eligible,
+        excluded_for: paper.excluded_for
+      },
+      primary_topic: primaryTopic,
+      related_keywords: relatedKeywords,
+      related_papers: relatedPapers,
+      methodology: {
+        topic_scope: 'the paper conference and publication year when available',
+        primary_topic: 'paper keyword with the highest eligible-paper count; ties use topic name ascending',
+        related_keywords: 'direct co-occurrence with the primary topic among eligible papers in the topic scope',
+        related_papers: 'eligible papers in the same conference/year sharing exact normalized keywords, excluding the current paper',
+        warning: 'Keyword frequency and co-occurrence are descriptive and do not imply paper quality or causality.'
+      }
+    }
   }
 
   listPapers({

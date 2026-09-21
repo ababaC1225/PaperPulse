@@ -1,13 +1,18 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Download, RefreshCw, Search, X } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
 import TopBar from '@/components/TopBar.vue'
 import { paperApi } from '@/services/paperApi'
 
-const selectedConference = ref('')
-const selectedYear = ref('')
+const route = useRoute()
+const routeQueryValue = (key) => typeof route.query[key] === 'string' ? route.query[key].trim() : ''
+const requestedConference = routeQueryValue('conference').toLocaleUpperCase('en-US')
+const requestedYear = routeQueryValue('year')
+const selectedConference = ref(['CVPR', 'ICCV', 'ECCV'].includes(requestedConference) ? requestedConference : '')
+const selectedYear = ref(/^\d{4}$/u.test(requestedYear) ? requestedYear : '')
 const selectedSort = ref('count')
-const query = ref('')
+const query = ref(routeQueryValue('query'))
 const facets = ref({ conferences: [], years: [] })
 const facetsLoaded = ref(false)
 const topicsResponse = ref(null)
