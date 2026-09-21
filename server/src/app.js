@@ -4,6 +4,7 @@ import { createOverviewRouter } from './routes/overview.js'
 import { createTopicsRouter } from './routes/topics.js'
 import { createPapersRouter } from './routes/papers.js'
 import { createImportsRouter } from './routes/imports.js'
+import { createSearchRouter } from './routes/search.js'
 import { AppError } from './lib/errors.js'
 
 export function createApp(context) {
@@ -19,6 +20,7 @@ export function createApp(context) {
   })
   app.use('/api/overview', createOverviewRouter(context))
   app.use('/api/topics', createTopicsRouter(context))
+  app.use('/api/search', createSearchRouter(context))
   app.use('/api/papers', createPapersRouter(context))
   app.use('/api/imports', createImportsRouter(context))
 

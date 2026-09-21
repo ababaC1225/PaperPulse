@@ -17,9 +17,16 @@ export const HOT_TOPIC_SORTS = Object.freeze({
   growth: 'growth_percent IS NULL ASC, growth_percent DESC, paper_count DESC, topic COLLATE NOCASE ASC'
 })
 
+function escapeLikePattern(value) {
+  return String(value).replace(/[\\%_]/gu, (character) => `\\${character}`)
+}
+
 function containsPattern(value) {
-  const escaped = String(value).replace(/[\\%_]/gu, (character) => `\\${character}`)
-  return `%${escaped}%`
+  return `%${escapeLikePattern(value)}%`
+}
+
+function prefixPattern(value) {
+  return `${escapeLikePattern(value)}%`
 }
 
 function paperScope({ conference = null, year = null } = {}, table = '') {
@@ -381,7 +388,7 @@ export class PaperRepository {
 
   listPapers({
     query = '', conference = null, year = null, status = null, dataStatus = null,
-    sourceName = null, sort = 'updated_desc', limit = 20, offset = 0
+    sourceName = null, author = null, sort = 'updated_desc', limit = 20, offset = 0
   } = {}) {
     const clauses = []
     const params = []
@@ -407,6 +414,15 @@ export class PaperRepository {
     const statusFilter = dataStatus || status
     if (statusFilter) { clauses.push('data_status = ?'); params.push(statusFilter) }
     if (sourceName) { clauses.push('source_name = ? COLLATE NOCASE'); params.push(sourceName) }
+    if (author) {
+      clauses.push(`EXISTS (
+        SELECT 1
+        FROM json_each(CASE WHEN json_valid(authors_json) THEN authors_json ELSE '[]' END) AS author_filter
+        WHERE author_filter.type = 'text'
+          AND trim(CAST(author_filter.value AS TEXT)) = ? COLLATE NOCASE
+      )`)
+      params.push(author)
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     const orderBy = PAPER_SORTS[sort] || PAPER_SORTS.updated_desc
     const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM papers ${where}`).get(...params).count)
@@ -422,6 +438,138 @@ export class PaperRepository {
       page_count: pageCount,
       has_previous: offset > 0,
       has_next: offset + limit < total
+    }
+  }
+
+  globalSearch({ query, limit = 5 } = {}) {
+    const trimmedQuery = String(query).trim()
+    const prefix = prefixPattern(trimmedQuery)
+    const partial = containsPattern(trimmedQuery)
+
+    const paperRows = this.db.prepare(`
+      WITH paper_search_values AS (
+        SELECT paper_id, trim(paper_id) AS value FROM papers
+        UNION ALL
+        SELECT paper_id, trim(title) FROM papers WHERE length(trim(title)) > 0
+        UNION ALL
+        SELECT paper_id, trim(conference) FROM papers WHERE conference IS NOT NULL AND length(trim(conference)) > 0
+        UNION ALL
+        SELECT papers.paper_id, trim(CAST(author.value AS TEXT))
+        FROM papers
+        JOIN json_each(CASE WHEN json_valid(papers.authors_json) THEN papers.authors_json ELSE '[]' END) AS author
+        WHERE author.type = 'text' AND length(trim(CAST(author.value AS TEXT))) > 0
+        UNION ALL
+        SELECT papers.paper_id, trim(CAST(keyword.value AS TEXT))
+        FROM papers
+        JOIN json_each(CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END) AS keyword
+        WHERE keyword.type = 'text' AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      ),
+      paper_matches AS (
+        SELECT
+          paper_id,
+          MIN(CASE
+            WHEN value = ? COLLATE NOCASE THEN 0
+            WHEN value COLLATE NOCASE LIKE ? ESCAPE '\\' THEN 1
+            ELSE 2
+          END) AS match_rank
+        FROM paper_search_values
+        WHERE value COLLATE NOCASE LIKE ? ESCAPE '\\'
+        GROUP BY paper_id
+      )
+      SELECT papers.*, paper_matches.match_rank
+      FROM paper_matches
+      JOIN papers ON papers.paper_id = paper_matches.paper_id
+      ORDER BY paper_matches.match_rank ASC, papers.title COLLATE NOCASE ASC, papers.paper_id ASC
+      LIMIT ?
+    `).all(trimmedQuery, prefix, partial, limit)
+
+    const topicScope = eligiblePaperScope({}, 'papers')
+    const topicRows = this.db.prepare(`
+      WITH topic_values AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END) AS keyword
+        WHERE ${topicScope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      ),
+      topic_counts AS (
+        SELECT topic, COUNT(*) AS paper_count
+        FROM topic_values
+        GROUP BY topic
+      )
+      SELECT
+        topic,
+        paper_count,
+        CASE
+          WHEN topic = ? COLLATE NOCASE THEN 0
+          WHEN topic COLLATE NOCASE LIKE ? ESCAPE '\\' THEN 1
+          ELSE 2
+        END AS match_rank
+      FROM topic_counts
+      WHERE topic COLLATE NOCASE LIKE ? ESCAPE '\\'
+      ORDER BY match_rank ASC, paper_count DESC, topic COLLATE NOCASE ASC
+      LIMIT ?
+    `).all(...topicScope.params, trimmedQuery, prefix, partial, limit)
+
+    const authorRows = this.db.prepare(`
+      WITH author_values AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          trim(CAST(author.value AS TEXT)) AS author,
+          lower(trim(CAST(author.value AS TEXT))) AS author_key
+        FROM papers
+        JOIN json_each(CASE WHEN json_valid(papers.authors_json) THEN papers.authors_json ELSE '[]' END) AS author
+        WHERE author.type = 'text'
+          AND length(trim(CAST(author.value AS TEXT))) > 0
+      ),
+      author_counts AS (
+        SELECT author_key, MIN(author) AS author, COUNT(DISTINCT paper_id) AS paper_count
+        FROM author_values
+        GROUP BY author_key
+      )
+      SELECT
+        author,
+        paper_count,
+        CASE
+          WHEN author_key = lower(?) THEN 0
+          WHEN author_key LIKE lower(?) ESCAPE '\\' THEN 1
+          ELSE 2
+        END AS match_rank
+      FROM author_counts
+      WHERE author_key LIKE lower(?) ESCAPE '\\'
+      ORDER BY match_rank ASC, paper_count DESC, author COLLATE NOCASE ASC, author ASC
+      LIMIT ?
+    `).all(trimmedQuery, prefix, partial, limit)
+
+    return {
+      query: trimmedQuery,
+      limit,
+      papers: paperRows.map((row) => {
+        const paper = rowToPaper(row)
+        return {
+          paper_id: paper.paper_id,
+          title: paper.title,
+          authors: paper.authors,
+          conference: paper.conference,
+          year: paper.year,
+          keywords: paper.keywords,
+          data_status: paper.data_status,
+          match_rank: Number(row.match_rank)
+        }
+      }),
+      topics: topicRows.map((row) => ({
+        topic: row.topic,
+        paper_count: Number(row.paper_count),
+        match_rank: Number(row.match_rank)
+      })),
+      authors: authorRows.map((row) => ({
+        author: row.author,
+        paper_count: Number(row.paper_count),
+        match_rank: Number(row.match_rank)
+      }))
     }
   }
 

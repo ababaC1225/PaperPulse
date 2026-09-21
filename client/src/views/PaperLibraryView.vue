@@ -1,11 +1,17 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
 import TopBar from '@/components/TopBar.vue'
 import { paperApi } from '@/services/paperApi'
 
+const route = useRoute()
+const router = useRouter()
+const routeText = (key) => typeof route.query[key] === 'string' ? route.query[key].trim() : ''
+const routeSearch = () => routeText('search') || routeText('query')
 const maximumYear = new Date().getUTCFullYear() + 1
-const query = ref('')
+const query = ref(routeSearch())
+const author = ref(routeText('author'))
 const papers = ref([])
 const total = ref(0)
 const offset = ref(0)
@@ -34,7 +40,7 @@ let searchTimer = null
 let requestSequence = 0
 
 const activeFilterCount = computed(() => ['conference', 'year', 'dataStatus', 'sourceName']
-  .filter((key) => filters.value[key] !== '').length)
+  .filter((key) => filters.value[key] !== '').length + Number(Boolean(author.value)))
 const hasActiveCriteria = computed(() => Boolean(query.value.trim()) || activeFilterCount.value > 0)
 const showingStart = computed(() => total.value ? offset.value + 1 : 0)
 const showingEnd = computed(() => Math.min(offset.value + papers.value.length, total.value))
@@ -80,6 +86,7 @@ async function loadPapers() {
   try {
     const result = await paperApi.list({
       query: query.value.trim(),
+      author: author.value,
       conference: filters.value.conference,
       year: filters.value.year,
       data_status: filters.value.dataStatus,
@@ -140,12 +147,32 @@ function applyFilters() {
 }
 
 function clearFilters() {
+  const routeWillChange = Boolean(routeSearch() || routeText('author'))
   filters.value = defaultFilters()
   draftFilters.value = defaultFilters()
+  query.value = ''
+  author.value = ''
   filterError.value = ''
   filtersOpen.value = false
   page.value = 1
-  loadPapers()
+  if (routeWillChange) replaceLibraryCriteria({ search: '', author: '' })
+  else loadPapers()
+}
+
+function replaceLibraryCriteria({ search = query.value.trim(), author: nextAuthor = author.value } = {}) {
+  const nextQuery = { ...route.query }
+  delete nextQuery.query
+  if (search) nextQuery.search = search
+  else delete nextQuery.search
+  if (nextAuthor) nextQuery.author = nextAuthor
+  else delete nextQuery.author
+  return router.replace({ query: nextQuery })
+}
+
+function clearAuthorFilter() {
+  author.value = ''
+  page.value = 1
+  replaceLibraryCriteria({ author: '' })
 }
 
 function goToPage(target) {
@@ -256,9 +283,23 @@ watch(query, () => {
   clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
     page.value = 1
-    loadPapers()
+    if (query.value.trim() === routeSearch()) loadPapers()
+    else replaceLibraryCriteria()
   }, 350)
 })
+
+watch(
+  () => [route.query.search, route.query.query, route.query.author],
+  () => {
+    const nextSearch = routeSearch()
+    const nextAuthor = routeText('author')
+    const searchChanged = query.value !== nextSearch
+    query.value = nextSearch
+    author.value = nextAuthor
+    page.value = 1
+    if (!searchChanged) loadPapers()
+  }
+)
 
 onMounted(loadPapers)
 onBeforeUnmount(() => {
@@ -289,6 +330,11 @@ onBeforeUnmount(() => {
       </button>
       <router-link class="outline-btn" to="/import">Import papers</router-link>
       <button class="dark-btn add-paper" type="button" @click="openCreate"><Plus :size="16" /> New paper</button>
+    </div>
+
+    <div v-if="author" class="route-filter" role="status">
+      <span>Showing papers by <strong>{{ author }}</strong></span>
+      <button type="button" aria-label="Clear author filter" @click="clearAuthorFilter"><X :size="15" /> Clear</button>
     </div>
 
     <form v-if="filtersOpen" id="paper-filters" class="filter-panel" @submit.prevent="applyFilters">
@@ -386,6 +432,9 @@ h1 { font-size:32px; font-weight:800; }
 .notice span { flex:1; }
 .notice button { display:grid; place-items:center; color:inherit; }
 .library-toolbar { display:grid; grid-template-columns:minmax(280px,1fr) auto auto auto; align-items:center; gap:16px; margin-bottom:28px; }
+.route-filter { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-12px 0 20px; padding:10px 14px; border:1px solid #ddd6ff; border-radius:10px; color:var(--text-secondary); background:#faf9ff; font-size:14px; }
+.route-filter strong { color:var(--text-primary); }
+.route-filter button { display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-weight:700; }
 .load-note { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-12px 0 18px; padding:11px 14px; border-radius:10px; color:#9a6d00; background:#fff8e7; font-size:14px; }
 .load-note button { flex:0 0 auto; color:var(--accent); font-weight:700; }
 .local-search { display:flex; align-items:center; gap:11px; min-height:52px; padding:0 18px; border:1px solid var(--border); border-radius:12px; color:var(--text-muted); }

@@ -12,7 +12,7 @@ const requestedYear = routeQueryValue('year')
 const selectedConference = ref(['CVPR', 'ICCV', 'ECCV'].includes(requestedConference) ? requestedConference : '')
 const selectedYear = ref(/^\d{4}$/u.test(requestedYear) ? requestedYear : '')
 const selectedSort = ref('count')
-const query = ref(routeQueryValue('query'))
+const query = ref(routeQueryValue('topic') || routeQueryValue('query'))
 const facets = ref({ conferences: [], years: [] })
 const facetsLoaded = ref(false)
 const topicsResponse = ref(null)
@@ -206,6 +206,14 @@ watch(query, () => {
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => refreshTopics(), 300)
 })
+
+watch(
+  () => [route.query.topic, route.query.query],
+  () => {
+    const nextQuery = routeQueryValue('topic') || routeQueryValue('query')
+    if (query.value !== nextQuery) query.value = nextQuery
+  }
+)
 
 onMounted(() => loadTopics({ includeFacets: true }))
 onBeforeUnmount(() => {

@@ -26,6 +26,8 @@ import { Bell, ChevronDown } from 'lucide-vue-next'
 
 <style scoped>
 .topbar {
+  position: relative;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -117,5 +119,10 @@ import { Bell, ChevronDown } from 'lucide-vue-next'
 
 .chevron {
   color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .topbar { align-items: stretch; flex-direction: column-reverse; }
+  .topbar-right { justify-content: flex-end; }
 }
 </style>

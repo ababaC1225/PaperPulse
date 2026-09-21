@@ -53,6 +53,7 @@ function withQuery(path, params = {}) {
 }
 
 export const paperApi = {
+  globalSearch(query, limit = 5) { return request(withQuery('/api/search', { q: query, limit })) },
   search(title) { return request('/api/papers/search', jsonOptions('POST', { title })) },
   confirm(candidateId) { return request(`/api/papers/search/${encodeURIComponent(candidateId)}/confirm`, { method: 'POST' }) },
   list(params = {}) { return request(withQuery('/api/papers', params)) },

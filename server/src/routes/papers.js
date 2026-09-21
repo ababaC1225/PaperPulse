@@ -52,6 +52,7 @@ export function createPapersRouter({ repository, searchService, importService, p
         year: optionalYear(request.query.year),
         dataStatus: status,
         sourceName: boundedText(request.query.source_name, { label: 'Source name', maximum: 100, lowercase: true }) || null,
+        author: boundedText(request.query.author, { label: 'Author', maximum: 200 }) || null,
         sort,
         limit: boundedInteger(request.query.limit, 20, 1, 200, 'Limit'),
         offset: boundedInteger(request.query.offset, 0, 0, 1_000_000, 'Offset')

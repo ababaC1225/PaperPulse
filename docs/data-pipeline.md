@@ -110,7 +110,8 @@ GET  /api/topics/hot?conference=&year=&query=&sort=&limit=
 GET  /api/topics/:topic?conference=&year=&paper_limit=
 GET  /api/topics/network?conference=&year=&max_nodes=&min_node_count=&min_edge_count=&max_edges=&focus=
 GET  /api/topics/trends?topic=&topic=&conference=&conference=&start_year=&end_year=&metric=
-GET  /api/papers?query=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
+GET  /api/search?q=&limit=
+GET  /api/papers?query=&author=&conference=&year=&data_status=&source_name=&sort=&limit=&offset=
 GET  /api/papers/facets
 GET  /api/papers/recent?conference=&year=&limit=
 GET  /api/papers/:paperId
@@ -223,9 +224,29 @@ The Trend Analysis page obtains topic candidates from the live hot-topic endpoin
 
 These metrics are descriptive database frequencies. They are not forecasts, measures of paper quality, evidence of academic importance, or proof of causal relationships. Comparisons also inherit differences in source coverage and the availability of abstracts and author keywords.
 
+### Global search
+
+`GET /api/search?q=<query>&limit=<number>` powers the search combobox in the top navigation. `q` is trimmed and must contain 2–200 characters. `limit` defaults to 5 and accepts 1–20; it is a per-group maximum rather than a combined response limit. Invalid, missing, repeated, or out-of-range parameters return HTTP 400.
+
+The endpoint searches stored paper IDs, display titles, author names, normalized keywords, and conferences case-insensitively. All client values are bound SQL parameters. Literal `%`, `_`, backslashes, and quotes are treated as search text rather than SQL wildcard or syntax characters. Results use three deduplicated groups:
+
+```json
+{
+  "query": "vision",
+  "limit": 5,
+  "papers": [{ "paper_id": "PP-...", "title": "...", "authors": [], "conference": "CVPR", "year": 2025, "keywords": [], "data_status": "complete", "match_rank": 1 }],
+  "topics": [{ "topic": "computer vision", "paper_count": 12, "match_rank": 2 }],
+  "authors": [{ "author": "Researcher Name", "paper_count": 3, "match_rank": 2 }]
+}
+```
+
+Each group ranks a case-insensitive exact value before a prefix match, then a partial match. Paper ties use title then paper ID; topic and author ties use paper count descending then normalized display text. Topic counts use the same distinct analysis-eligible paper rule as Hot Topics. Author counts use distinct stored papers. Blank and malformed JSON values are ignored safely.
+
+The frontend debounces requests by 300 ms, does not query fewer than two characters, prevents stale responses from replacing newer results, and exposes loading, empty, and retryable error states. Paper choices navigate to `/papers/:id`; topic choices navigate to `/hot-topics?topic=<topic>`; author choices navigate to `/papers?author=<author>`. The Paper Library also accepts `search` to initialize its local text query and `author` as an exact case-insensitive author filter. These URL parameters remain synchronized with browser navigation.
+
 ### Paper Library search and pagination
 
-`GET /api/papers` performs all Paper Library search, filtering, sorting, and pagination on the server. `query` is a case-insensitive contains search across paper ID, display title, normalized title, authors, and keywords. Literal `%`, `_`, and backslash characters are escaped before the parameterized SQLite query is executed. `conference` accepts `CVPR`, `ICCV`, or `ECCV`; `data_status` accepts `complete`, `missing_fields`, or `fetch_failed`; `source_name` is an exact case-insensitive source-name filter. The legacy `status` parameter remains accepted as an alias for `data_status`.
+`GET /api/papers` performs all Paper Library search, filtering, sorting, and pagination on the server. `query` is a case-insensitive contains search across paper ID, display title, normalized title, authors, and keywords. Literal `%`, `_`, and backslash characters are escaped before the parameterized SQLite query is executed. `author` is an exact case-insensitive match against one complete author value, not a substring search. `conference` accepts `CVPR`, `ICCV`, or `ECCV`; `data_status` accepts `complete`, `missing_fields`, or `fetch_failed`; `source_name` is an exact case-insensitive source-name filter. The legacy `status` parameter remains accepted as an alias for `data_status`.
 
 The accepted `sort` values are fixed names mapped to trusted SQL fragments:
 
