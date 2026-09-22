@@ -1,7 +1,7 @@
 import { createApp } from './app.js'
 import { createContext } from './context.js'
 
-const context = createContext()
+const context = createContext({ recoverImports: true })
 const app = createApp(context)
 const server = app.listen(context.config.port, () => {
   context.logger.info('server_started', { port: context.config.port, sources: context.adapters.map((adapter) => adapter.name) })

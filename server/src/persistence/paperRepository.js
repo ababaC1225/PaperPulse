@@ -17,6 +17,8 @@ export const HOT_TOPIC_SORTS = Object.freeze({
   growth: 'growth_percent IS NULL ASC, growth_percent DESC, paper_count DESC, topic COLLATE NOCASE ASC'
 })
 
+export const IMPORT_JOB_STATUSES = Object.freeze(['pending', 'processing', 'completed', 'failed'])
+
 function escapeLikePattern(value) {
   return String(value).replace(/[\\%_]/gu, (character) => `\\${character}`)
 }
@@ -1314,6 +1316,99 @@ export class PaperRepository {
       if (Object.hasOwn(counts, item.status)) counts[item.status] += 1
     }
     return { ...job, counts, items }
+  }
+
+  listImportJobs({ status = null, limit = 20, offset = 0 } = {}) {
+    const where = status ? 'WHERE import_jobs.status = ?' : ''
+    const params = status ? [status] : []
+    const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM import_jobs ${where}`).get(...params).count)
+    const rows = this.db.prepare(`
+      SELECT
+        import_jobs.job_id,
+        import_jobs.status,
+        import_jobs.created_at,
+        import_jobs.updated_at,
+        COUNT(import_items.item_id) AS total_count,
+        SUM(CASE WHEN import_items.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+        SUM(CASE WHEN import_items.status = 'processing' THEN 1 ELSE 0 END) AS processing_count,
+        SUM(CASE WHEN import_items.status = 'successful' THEN 1 ELSE 0 END) AS successful_count,
+        SUM(CASE WHEN import_items.status = 'duplicate' THEN 1 ELSE 0 END) AS duplicate_count,
+        SUM(CASE WHEN import_items.status = 'missing_fields' THEN 1 ELSE 0 END) AS missing_fields_count,
+        SUM(CASE WHEN import_items.status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+      FROM import_jobs
+      LEFT JOIN import_items ON import_items.job_id = import_jobs.job_id
+      ${where}
+      GROUP BY import_jobs.job_id
+      ORDER BY import_jobs.created_at DESC, import_jobs.job_id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset)
+    return {
+      items: rows.map((row) => ({
+        job_id: row.job_id,
+        status: row.status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        counts: {
+          total: Number(row.total_count),
+          pending: Number(row.pending_count),
+          processing: Number(row.processing_count),
+          successful: Number(row.successful_count),
+          duplicate: Number(row.duplicate_count),
+          missing_fields: Number(row.missing_fields_count),
+          failed: Number(row.failed_count)
+        }
+      })),
+      total,
+      limit,
+      offset,
+      has_more: offset + rows.length < total
+    }
+  }
+
+  recoverInterruptedImportJobs() {
+    const now = new Date().toISOString()
+    const recovered = []
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const jobs = this.db.prepare(`
+        SELECT job_id, status
+        FROM import_jobs
+        WHERE status IN ('pending', 'processing')
+        ORDER BY created_at ASC, job_id ASC
+      `).all()
+      const resetItems = this.db.prepare(`
+        UPDATE import_items
+        SET status = 'pending', paper_id = NULL, candidate_json = NULL,
+          failure_reason = NULL, retry_eligible = 0, updated_at = ?
+        WHERE job_id = ? AND status = 'processing'
+      `)
+      const pendingCount = this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM import_items
+        WHERE job_id = ? AND status = 'pending'
+      `)
+      const updateJob = this.db.prepare(`
+        UPDATE import_jobs SET status = ?, updated_at = ? WHERE job_id = ?
+      `)
+      for (const job of jobs) {
+        const reset = Number(resetItems.run(now, job.job_id).changes)
+        const pending = Number(pendingCount.get(job.job_id).count)
+        const nextStatus = pending > 0 ? 'pending' : 'completed'
+        updateJob.run(nextStatus, now, job.job_id)
+        recovered.push({
+          job_id: job.job_id,
+          previous_status: job.status,
+          status: nextStatus,
+          reset_processing: reset,
+          pending_items: pending
+        })
+      }
+      this.db.exec('COMMIT')
+      return recovered
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   resetRetryableItems(jobId) {

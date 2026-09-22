@@ -64,7 +64,43 @@ CSV uses a `title`/`paper title` header when present; otherwise column 1 is the 
 
 Jobs run in-process with bounded concurrency. Each item transitions through `pending` and `processing` to `successful`, `duplicate`, `missing_fields`, or `failed`. A failing item does not stop its siblings. The job API returns total/pending/processing/successful/duplicate/missing-field/failed counts, a failure reason, and retry eligibility per item. Retry resets only eligible failures.
 
-Jobs and progress survive an application restart because they are in SQLite, but a job that was processing when the process stopped is not automatically resumed. See known limitations.
+Jobs and progress survive application restarts because they are stored in SQLite. Server startup recovery resumes safely processable work as described below.
+
+### Import history and restart recovery
+
+`GET /api/imports?status=<status>&limit=<limit>&offset=<offset>` returns persistent import-job summaries ordered by `created_at` descending and job ID descending for deterministic ties. `status` is optional and accepts `pending`, `processing`, `completed`, or `failed`. `limit` defaults to 20 and accepts 1–100; `offset` defaults to 0 and accepts 0–1,000,000. Malformed, repeated, or out-of-range parameters return the standard HTTP 400 validation response.
+
+The list response contains aggregate state only and deliberately omits per-row import items:
+
+```json
+{
+  "items": [
+    {
+      "job_id": "uuid",
+      "status": "completed",
+      "created_at": "2026-09-22T08:00:00.000Z",
+      "updated_at": "2026-09-22T08:01:00.000Z",
+      "counts": {
+        "total": 4,
+        "pending": 0,
+        "processing": 0,
+        "successful": 2,
+        "duplicate": 1,
+        "missing_fields": 0,
+        "failed": 1
+      }
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+`GET /api/imports/:jobId` remains the detailed endpoint and includes the ordered item array, candidate data, failure reasons, and retry eligibility. The Import Papers page loads recent summaries on mount. Selecting a history entry loads its detail, and selected `pending` or `processing` jobs are polled sequentially every 700 ms. A new poll is scheduled only after the prior request finishes, request sequence checks prevent stale responses, and polling stops when the job finishes, an error occurs, another job is selected, or the component unmounts. History refreshes after job creation, retry, and completion.
+
+At server startup, PaperPulse atomically inspects jobs left in `pending` or `processing`. Interrupted `processing` items are reset to `pending`, with incomplete candidate/result fields cleared, and jobs with pending items are scheduled once through the import service's in-memory running-job guard. Jobs with no pending items are marked `completed`. Existing `successful`, `duplicate`, `missing_fields`, and `failed` item results are preserved and are never automatically re-imported. Recovery logs contain job IDs, status transitions, and counts only; paper titles and source contents are not logged by recovery.
 
 ## Configuration
 
@@ -103,6 +139,7 @@ POST /api/papers                           { "title": "...", "conference": "CVPR
 PATCH /api/papers/:paperId                 { "title": "updated title", ... }
 DELETE /api/papers/:paperId
 POST /api/imports                         { "content": "...", "format": "txt|csv" }
+GET  /api/imports?status=&limit=&offset=
 GET  /api/imports/:jobId
 POST /api/imports/:jobId/retry
 GET  /api/overview/stats?conference=&year=
@@ -326,7 +363,7 @@ npm run cli -- summary <job-id>
 
 ## Tests and fixtures
 
-`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, hot-topic formulas/filtering/sorting/exact detail matching/trends, keyword-network nodes/pairs/Jaccard/thresholds/focus behavior, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
+`npm test` runs Node's test runner. Tests use in-memory SQLite, fake adapters, mocked `fetch`, and the sanitized files under `server/test/fixtures`; they never require a live website. Coverage includes cleaning, missing data, matching, duplicate/idempotent persistence, malformed input, partial batch success, persistent import-history pagination and restart recovery, timeout/retry exhaustion, source parsing, Overview aggregation and scope behavior, hot-topic formulas/filtering/sorting/exact detail matching/trends, keyword-network nodes/pairs/Jaccard/thresholds/focus behavior, recent-paper ordering and filtering, Paper Library query/filter/sort/pagination behavior, and every required API workflow.
 
 ## Known limitations
 
@@ -334,7 +371,7 @@ npm run cli -- summary <job-id>
 - CVF does not consistently publish author keywords. Missing keywords remain missing rather than being inferred.
 - DBLP is bibliographic fallback data and normally does not provide abstracts or keywords.
 - The ECVA index layout may cover different years unevenly.
-- Batch execution is an in-process worker. For durable automatic resume and multiple server replicas, replace it with a persistent queue and startup recovery policy.
+- Batch execution uses an in-process worker with single-server startup recovery. Multiple server replicas still require a shared queue, distributed lease, or equivalent coordination before they can process imports safely.
 - The SQLite keyword-network query computes pairs on demand. Large corpora or papers with unusually many keywords will eventually need precomputed aggregates or a background analysis job.
 - SQLite uses Node's built-in `node:sqlite`, which is marked experimental in the current Node 22 runtime even though the exercised API is functional.
 

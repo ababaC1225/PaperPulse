@@ -72,6 +72,7 @@ export const paperApi = {
   create(paper) { return request('/api/papers', jsonOptions('POST', paper)) },
   update(paperId, paper) { return request(`/api/papers/${encodeURIComponent(paperId)}`, jsonOptions('PATCH', paper)) },
   delete(paperId) { return request(`/api/papers/${encodeURIComponent(paperId)}`, { method: 'DELETE' }) },
+  listImports(params = {}) { return request(withQuery('/api/imports', params)) },
   createImport(payload) { return request('/api/imports', jsonOptions('POST', payload)) },
   getImport(jobId) { return request(`/api/imports/${encodeURIComponent(jobId)}`) },
   retryImport(jobId) { return request(`/api/imports/${encodeURIComponent(jobId)}/retry`, { method: 'POST' }) }

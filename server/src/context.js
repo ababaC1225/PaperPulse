@@ -27,6 +27,7 @@ export function createContext(options = {}) {
   const adapters = options.adapters || config.enabledSources.filter((name) => available[name]).map((name) => available[name]())
   const searchService = options.searchService || new SearchService({ adapters, repository, config, logger })
   const importService = options.importService || new ImportService({ repository, searchService, config, logger })
+  if (options.recoverImports) importService.recoverInterruptedJobs()
   const paperCrudService = options.paperCrudService || new PaperCrudService({ repository, config, logger })
   return {
     config,

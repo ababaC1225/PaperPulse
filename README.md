@@ -20,6 +20,7 @@ The Vite server proxies `/api` to the Express server. Paper data is stored in `s
 - Search a full or partial paper title across CVF Open Access, ECVA, and DBLP.
 - Review ranked, merged candidates and save only after confirmation.
 - Import CSV/TXT files or pasted titles with observable per-row progress and retryable failures.
+- Reopen persistent import history and automatically resume interrupted jobs after a server restart.
 - Deterministically clean metadata without fabricating abstracts or keywords.
 - Prevent duplicates by normalized title/conference/year, DOI, source ID, and canonical URL.
 - Browse stored records and view source, quality state, missing fields, and analysis eligibility.

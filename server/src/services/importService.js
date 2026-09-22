@@ -36,6 +36,33 @@ export class ImportService {
     return job
   }
 
+  list(options = {}) {
+    return this.repository.listImportJobs(options)
+  }
+
+  recoverInterruptedJobs() {
+    const jobs = this.repository.recoverInterruptedImportJobs()
+    for (const job of jobs) {
+      this.logger.info('batch_recovered', {
+        job_id: job.job_id,
+        previous_status: job.previous_status,
+        status: job.status,
+        reset_processing: job.reset_processing,
+        pending_items: job.pending_items
+      })
+      if (job.pending_items > 0) this.schedule(job.job_id)
+    }
+    if (jobs.length) {
+      this.logger.info('batch_recovery_complete', {
+        jobs: jobs.length,
+        resumed: jobs.filter((job) => job.pending_items > 0).length,
+        completed: jobs.filter((job) => job.status === 'completed').length,
+        reset_processing: jobs.reduce((total, job) => total + job.reset_processing, 0)
+      })
+    }
+    return jobs
+  }
+
   retry(jobId) {
     this.get(jobId)
     if (this.running.has(jobId)) throw new ValidationError('Import job is already processing')
