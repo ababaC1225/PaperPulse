@@ -1,6 +1,7 @@
 import {
   canonicalizeUrl,
   cleanPaperRecord,
+  normalizeKeywords,
   normalizeYear
 } from '../domain/cleaning.js'
 import { ConflictError, NotFoundError, ValidationError } from '../lib/errors.js'
@@ -81,6 +82,9 @@ export class PaperCrudService {
 
     return cleanPaperRecord({
       ...values,
+      keyword_provenance: Object.hasOwn(input, 'keywords')
+        && JSON.stringify(normalizeKeywords(values.keywords, this.cleaningOptions)) !== JSON.stringify(existing?.keywords)
+        ? { method: 'manual' } : existing?.keyword_provenance,
       source_name: existing?.source_name || 'manual',
       source_record_id: existing?.source_record_id || null,
       retrieval_error: null,

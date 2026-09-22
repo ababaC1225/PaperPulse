@@ -1,4 +1,5 @@
 import { load } from 'cheerio'
+import { extractKeywords, EXTRACTOR_VERSION } from './keywordExtraction.js'
 
 const CONFERENCE_ALIASES = new Map([
   ['cvpr', 'CVPR'],
@@ -172,7 +173,12 @@ export function cleanPaperRecord(input, options = {}) {
   const conference = canonicalizeConference(input.conference || input.venue)
   const year = normalizeYear(input.year)
   const abstract = cleanAbstract(input.abstract)
-  const keywords = normalizeKeywords(input.keywords, options)
+  const supplied = input.keyword_provenance?.method === EXTRACTOR_VERSION ? [] : normalizeKeywords(input.keywords, options)
+  const extracted = supplied.length ? [] : extractKeywords({ title, abstract }, options)
+  const keywords = supplied.length ? supplied : normalizeKeywords(extracted.map((item) => item.phrase), options)
+  const keywordProvenance = supplied.length
+    ? (input.keyword_provenance || { method: input.source_name === 'manual' ? 'manual' : 'provided' })
+    : { method: keywords.length ? EXTRACTOR_VERSION : 'unavailable', fields: ['title', 'abstract'], candidates: extracted }
   const originalUrl = canonicalizeUrl(input.original_url || input.originalUrl || input.url)
   const doi = cleanDisplayText(
     asString(input.doi)
@@ -192,6 +198,7 @@ export function cleanPaperRecord(input, options = {}) {
     year,
     abstract,
     keywords,
+    keyword_provenance: keywordProvenance,
     original_url: originalUrl,
     canonical_url: originalUrl,
     source_name: sourceName,

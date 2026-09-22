@@ -21,7 +21,7 @@ The Vite server proxies `/api` to the Express server. Paper data is stored in `s
 - Review ranked, merged candidates and save only after confirmation.
 - Import CSV/TXT files or pasted titles with observable per-row progress and retryable failures.
 - Reopen persistent import history and automatically resume interrupted jobs after a server restart.
-- Deterministically clean metadata without fabricating abstracts or keywords.
+- Deterministically clean metadata and extract missing keywords from real titles/abstracts using labeled TextRank results.
 - Prevent duplicates by normalized title/conference/year, DOI, source ID, and canonical URL.
 - Browse stored records and view source, quality state, missing fields, and analysis eligibility.
 - Manually create, edit, and delete library papers with validation and duplicate-conflict protection.
@@ -39,7 +39,8 @@ npm run build        # production Vue build
 npm run cli -- --help
 ```
 
-The tests do not contact live websites. Example import files are in [`examples`](examples), and the CLI supports `search`, `import`, `clean`, and `summary` commands.
+The tests do not contact live websites. Example import files are in [`examples`](examples), and the CLI supports `demo-import`, `extract-keywords`, `search`, `import`, `clean`, and `summary` commands.
 
 For database tables, fields, constraints, and migration instructions, see [`docs/database.md`](docs/database.md).
+For a reproducible multi-year real-paper demonstration dataset and keyword extraction, see [`docs/demo-dataset.md`](docs/demo-dataset.md).
 For API examples, architecture, data-source citation details, cleaning and exclusion rules, safeguards, configuration, limitations, and adapter extension instructions, see [`docs/data-pipeline.md`](docs/data-pipeline.md).

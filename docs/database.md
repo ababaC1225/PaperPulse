@@ -45,6 +45,12 @@ stores the normalized title used for matching; author, DOI, canonical URL, and
 source record identifiers; explicit missing-field and retrieval-error data; and
 retrieval/creation/update timestamps.
 
+Migration 2 adds `keyword_provenance_json`. The API exposes this as
+`keyword_provenance`, recording `provided`, `manual`, `unavailable`, or
+`textrank-v1`, with input fields and scored phrases for extracted keywords.
+Historical records default to `provided`; the backfill command upgrades records
+with no usable keywords without replacing existing supplied keywords.
+
 Arrays and source payloads are encoded as JSON text because SQLite has no native
 array type. Application code converts `keywords_json`, `authors_json`, and
 `missing_fields_json` back to arrays when reading a record.

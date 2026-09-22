@@ -9,15 +9,16 @@ export function parseEcvaIndex(body, baseUrl = 'https://www.ecva.net/papers.php'
   $('a[href]').each((_, element) => {
     const anchor = $(element)
     const href = anchor.attr('href') || ''
-    if (!/(?:paper|papers|eccv).*\.(?:php|html?)|\/papers\//iu.test(href)) return
+    if (!/\/html\/[^/]+\.(?:php|html?)(?:[?#].*)?$/iu.test(href)) return
     const title = cleanDisplayText(anchor.text())
     if (title.length < 12 || /^(pdf|paper|supplementary)$/iu.test(title)) return
     const originalUrl = canonicalizeUrl(new URL(href, baseUrl).toString())
     const key = `${normalizeTitle(title)}|${originalUrl}`
     if (seen.has(key)) return
     seen.add(key)
-    const context = cleanDisplayText(anchor.closest('li, tr, div, p').text())
-    const year = normalizeYear(context) || normalizeYear(href)
+    // The detail URL identifies the edition. Avoid reading an entire page-sized
+    // parent div for every anchor (quadratic work and incorrect mixed-year data).
+    const year = normalizeYear(href) || normalizeYear(anchor.closest('li, tr, p, dt').text())
     results.push({
       title,
       conference: 'ECCV',
@@ -37,8 +38,10 @@ export function parseEcvaIndex(body, baseUrl = 'https://www.ecva.net/papers.php'
 export function parseEcvaPaper(body, candidate) {
   const $ = load(body)
   const abstract = cleanDisplayText($('#abstract, .abstract').first().text() || $('meta[name="description"]').attr('content')) || null
-  const authors = $('meta[name="citation_author"]').map((_, element) => cleanDisplayText($(element).attr('content'))).get().filter(Boolean)
-  const doi = cleanDisplayText($('meta[name="citation_doi"]').attr('content')).toLowerCase() || null
+  const metaAuthors = $('meta[name="citation_author"]').map((_, element) => cleanDisplayText($(element).attr('content'))).get().filter(Boolean)
+  const authors = metaAuthors.length ? metaAuthors : cleanDisplayText($('#authors').text()).split(/[,;]+/u).map((s) => s.trim()).filter(Boolean)
+  const doiLink = $('a[href]').toArray().map((a) => $(a).attr('href')).find((url) => /^https:\/\/(?:link\.springer\.com\/chapter\/|doi\.org\/)10\./iu.test(url))
+  const doi = cleanDisplayText($('meta[name="citation_doi"]').attr('content') || doiLink?.replace(/^https:\/\/[^/]+\/(?:chapter\/)?/iu, '')).toLowerCase() || null
   return { ...candidate, abstract, authors: authors.length ? authors : candidate.authors, doi: doi || candidate.doi }
 }
 

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createContext } from './context.js'
 import { cleanPaperRecord } from './domain/cleaning.js'
+import { importDemoDataset } from './demoDataset.js'
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -16,6 +17,8 @@ function usage() {
   return `PaperPulse CLI
 
 Commands:
+  demo-import [count]            Import a reproducible real sample (default 20 per edition)
+  extract-keywords               Backfill/recompute derived keywords in stored papers
   search <title>                 Search sources without saving
   import <file.csv|file.txt>     Start an import and wait for its summary
   clean <json-or-file.json>      Normalize one paper record
@@ -37,6 +40,27 @@ async function main() {
 
   const context = createContext()
   try {
+    if (command === 'demo-import') {
+      const report = await importDemoDataset(context, args[0] == null ? 20 : Number(args[0]))
+      console.log(JSON.stringify(report, null, 2))
+      if (report.errors.length || report.cohorts.some((c) => c.eligible < report.requested_per_cohort)) process.exitCode = 1
+      return
+    }
+    if (command === 'extract-keywords') {
+      const ids = context.repository.db.prepare('SELECT paper_id FROM papers ORDER BY paper_id').all()
+      let updated = 0
+      for (const { paper_id } of ids) {
+        const before = context.repository.getPaper(paper_id)
+        if (before.keywords.length && before.keyword_provenance?.method !== 'textrank-v1') continue
+        const after = cleanPaperRecord(before, context.config)
+        if (JSON.stringify(after.keywords) === JSON.stringify(before.keywords)
+          && JSON.stringify(after.keyword_provenance) === JSON.stringify(before.keyword_provenance)) continue
+        context.repository.updatePaper(paper_id, after)
+        updated++
+      }
+      console.log(JSON.stringify({ inspected: ids.length, updated }))
+      return
+    }
     if (command === 'search') {
       const title = args.join(' ')
       console.log(JSON.stringify(await context.searchService.search(title), null, 2))

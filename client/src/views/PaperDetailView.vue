@@ -148,6 +148,7 @@ onBeforeUnmount(() => {
           <p class="abstract">{{ paper.abstract || 'Not available' }}</p>
 
           <h3>Normalized keywords</h3>
+          <p class="unavailable">{{ paper.keyword_provenance?.method === 'textrank-v1' ? 'Automatically extracted from title and abstract (TextRank); not author-supplied keywords.' : paper.keyword_provenance?.method === 'manual' ? 'Manually supplied keywords.' : paper.keyword_provenance?.method === 'unavailable' ? 'No keyword provenance is available.' : 'Keywords supplied with the paper record.' }}</p>
           <div v-if="paper.keywords.length" class="keyword-row">
             <router-link
               v-for="(keyword, index) in paper.keywords"

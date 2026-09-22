@@ -108,11 +108,13 @@ function rowToPaper(row) {
   const missingFields = json(row.missing_fields_json)
   const paper = {
     ...row,
+    keyword_provenance: json(row.keyword_provenance_json, { method: 'unavailable' }),
     keywords: Array.isArray(keywords) ? keywords : [],
     authors: Array.isArray(authors) ? authors : [],
     missing_fields: Array.isArray(missingFields) ? missingFields : []
   }
   delete paper.keywords_json
+  delete paper.keyword_provenance_json
   delete paper.authors_json
   delete paper.missing_fields_json
   Object.assign(paper, analysisEligibility(paper))
@@ -169,14 +171,14 @@ export class PaperRepository {
       INSERT INTO papers (
         paper_id, title, normalized_title, conference, year, abstract, keywords_json,
         original_url, canonical_url, source_name, source_record_id, doi, authors_json,
-        data_status, missing_fields_json, retrieval_error, retrieved_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        data_status, missing_fields_json, retrieval_error, retrieved_at, created_at, updated_at, keyword_provenance_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       paperId, record.title, record.normalized_title, record.conference, record.year,
       record.abstract, JSON.stringify(record.keywords || []), record.original_url, record.canonical_url,
       record.source_name, record.source_record_id, record.doi, JSON.stringify(record.authors || []),
       record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
-      record.retrieved_at || now, now, now
+      record.retrieved_at || now, now, now, JSON.stringify(record.keyword_provenance || { method: 'provided' })
     )
     return this.getPaper(paperId)
   }
@@ -196,14 +198,14 @@ export class PaperRepository {
       UPDATE papers SET
         title = ?, normalized_title = ?, conference = ?, year = ?, abstract = ?, keywords_json = ?,
         original_url = ?, canonical_url = ?, source_name = ?, source_record_id = ?, doi = ?, authors_json = ?,
-        data_status = ?, missing_fields_json = ?, retrieval_error = ?, retrieved_at = ?, updated_at = ?
+        data_status = ?, missing_fields_json = ?, retrieval_error = ?, retrieved_at = ?, updated_at = ?, keyword_provenance_json = ?
       WHERE paper_id = ?
     `).run(
       record.title, record.normalized_title, record.conference, record.year,
       record.abstract, JSON.stringify(record.keywords || []), record.original_url, record.canonical_url,
       record.source_name, record.source_record_id, record.doi, JSON.stringify(record.authors || []),
       record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
-      record.retrieved_at || now, now, paperId
+      record.retrieved_at || now, now, JSON.stringify(record.keyword_provenance || { method: 'provided' }), paperId
     )
     return { conflict: null, paper: this.getPaper(paperId) }
   }
@@ -236,13 +238,13 @@ export class PaperRepository {
       this.db.prepare(`
         UPDATE papers SET title = ?, normalized_title = ?, conference = ?, year = ?, abstract = ?, keywords_json = ?,
           original_url = ?, canonical_url = ?, source_name = ?, source_record_id = ?, doi = ?, authors_json = ?,
-          data_status = ?, missing_fields_json = ?, retrieval_error = ?, retrieved_at = ?, updated_at = ?
+          data_status = ?, missing_fields_json = ?, retrieval_error = ?, retrieved_at = ?, updated_at = ?, keyword_provenance_json = ?
         WHERE paper_id = ?
       `).run(
         merged.title, merged.normalized_title, merged.conference, merged.year, merged.abstract, JSON.stringify(merged.keywords || []),
         merged.original_url, merged.canonical_url, merged.source_name, merged.source_record_id, merged.doi, JSON.stringify(merged.authors || []),
         record.data_status, JSON.stringify(record.missing_fields || []), record.retrieval_error,
-        record.retrieved_at || now, now, existing.paper_id
+        record.retrieved_at || now, now, JSON.stringify((record.keywords?.length ? record : existing).keyword_provenance || { method: 'provided' }), existing.paper_id
       )
       return { outcome: record.data_status, paper: this.getPaper(existing.paper_id) }
     }

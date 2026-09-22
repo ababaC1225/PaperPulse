@@ -30,14 +30,14 @@ The implementation does not scrape Google Scholar and does not bypass authentica
 
 ## Cleaning and matching rules
 
-Cleaning is deterministic and does not generate content:
+Cleaning is deterministic; missing abstracts are never generated. Derived keywords are separately labeled:
 
 1. Decode HTML entities and remove markup, scripts, and styles.
 2. Apply Unicode NFKC normalization.
 3. Normalize whitespace and common typographic punctuation.
 4. Preserve the cleaned display title and separately create a lowercase, punctuation-free `normalized_title`.
 5. Canonicalize supported venues to `CVPR`, `ICCV`, or `ECCV`; validate four-digit years against a safe range.
-6. Store unavailable abstracts as `null` and unavailable keywords as `[]`.
+6. Store unavailable abstracts as `null`. Preserve supplied keywords; otherwise extract phrases from title/abstract with TextRank when the abstract contains at least 20 words. Store `[]` when there is insufficient text.
 7. Case-fold, trim, stopword-filter, word-form-normalize, synonym-map, and deduplicate keywords.
 8. Canonicalize URLs by removing fragments and common tracking parameters.
 
@@ -368,7 +368,7 @@ npm run cli -- summary <job-id>
 ## Known limitations
 
 - Upstream HTML structures and availability can change; parser failures are logged and shown as source errors.
-- CVF does not consistently publish author keywords. Missing keywords remain missing rather than being inferred.
+- CVF does not consistently publish author keywords. TextRank-derived keywords are labeled in `keyword_provenance`; they are noisy text features, not authoritative author annotations. Missing/very short abstracts cannot supply automatic keywords.
 - DBLP is bibliographic fallback data and normally does not provide abstracts or keywords.
 - The ECVA index layout may cover different years unevenly.
 - Batch execution uses an in-process worker with single-server startup recovery. Multiple server replicas still require a shared queue, distributed lease, or equivalent coordination before they can process imports safely.

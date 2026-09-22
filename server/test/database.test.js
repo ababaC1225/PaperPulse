@@ -27,9 +27,10 @@ test('database initialization creates all required tables and records the migrat
   try {
     const result = initializeDatabase(temporary.databasePath)
     assert.deepEqual(result.tables, expectedTables)
-    assert.equal(result.schemaVersion, 1)
-    assert.equal(result.appliedMigrations.length, 1)
+    assert.equal(result.schemaVersion, 2)
+    assert.equal(result.appliedMigrations.length, 2)
     assert.equal(result.appliedMigrations[0].name, 'initial_schema')
+    assert.equal(result.appliedMigrations[1].name, 'keyword_provenance')
   } finally {
     temporary.remove()
   }
@@ -59,12 +60,16 @@ test('database initialization is idempotent and preserves existing rows', () => 
     database.close()
 
     const secondResult = initializeDatabase(temporary.databasePath)
-    assert.equal(secondResult.appliedMigrations.length, 1)
+    assert.equal(secondResult.appliedMigrations.length, 2)
 
     const reopened = openDatabase(temporary.databasePath)
     try {
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM papers').get().count, 1)
-      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 1)
+      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 2)
+      assert.deepEqual(
+        JSON.parse(reopened.prepare('SELECT keyword_provenance_json FROM papers').get().keyword_provenance_json),
+        { method: 'provided' }
+      )
     } finally {
       reopened.close()
     }
@@ -85,6 +90,7 @@ test('paper table defines required metadata and data-quality fields', () => {
       'year',
       'abstract',
       'keywords_json',
+      'keyword_provenance_json',
       'original_url',
       'source_name',
       'source_record_id',

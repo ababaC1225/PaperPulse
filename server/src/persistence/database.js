@@ -10,6 +10,11 @@ const migrations = [
     version: 1,
     name: 'initial_schema',
     file: path.join(currentDirectory, 'schema', '001_initial.sql')
+  },
+  {
+    version: 2,
+    name: 'keyword_provenance',
+    file: path.join(currentDirectory, 'schema', '002_keyword_provenance.sql')
   }
 ]
 
