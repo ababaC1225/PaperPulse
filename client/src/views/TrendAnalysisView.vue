@@ -6,6 +6,8 @@ import TrendStepChart from '@/components/TrendStepChart.vue'
 import { paperApi } from '@/services/paperApi'
 
 const conferenceOptions = ['CVPR', 'ICCV', 'ECCV']
+const playbackSpeeds = [0.5, 1, 2]
+const playbackBaselineMs = 900
 const currentYear = new Date().getUTCFullYear()
 const response = ref(null)
 const facets = ref({ conferences: [], years: [] })
@@ -17,6 +19,7 @@ const filterError = ref('')
 const candidateLoading = ref(false)
 const candidateError = ref('')
 const playing = ref(false)
+const playbackSpeed = ref(1)
 const visibleYear = ref(null)
 const topicToAdd = ref('')
 const draft = reactive({
@@ -49,6 +52,7 @@ const sourceLabel = computed(() => {
   return sources.length ? sources.join(' · ') : 'Stored PaperPulse paper records'
 })
 const peak = computed(() => response.value?.summary?.peak || null)
+const playbackIntervalMs = computed(() => playbackBaselineMs / playbackSpeed.value)
 
 function stopPlayback() {
   window.clearInterval(playbackTimer)
@@ -71,10 +75,20 @@ function advancePlayback() {
   if (visibleYear.value === animationYears.value.at(-1)) stopPlayback()
 }
 
+function startPlayback() {
+  window.clearInterval(playbackTimer)
+  playbackTimer = null
+  if (animationYears.value.length < 2 || isLastYear.value) {
+    playing.value = false
+    return
+  }
+  playing.value = true
+  playbackTimer = window.setInterval(advancePlayback, playbackIntervalMs.value)
+}
+
 function play() {
   if (playing.value || animationYears.value.length < 2 || isLastYear.value) return
-  playing.value = true
-  playbackTimer = window.setInterval(advancePlayback, 900)
+  startPlayback()
 }
 
 function pause() {
@@ -85,10 +99,7 @@ function replay() {
   if (!animationYears.value.length) return
   stopPlayback()
   visibleYear.value = animationYears.value[0]
-  if (animationYears.value.length > 1) {
-    playing.value = true
-    playbackTimer = window.setInterval(advancePlayback, 900)
-  }
+  if (animationYears.value.length > 1) startPlayback()
 }
 
 function syncDraft(result) {
@@ -230,6 +241,9 @@ watch(
   }
 )
 watch(() => [draft.topics.join('|'), draft.metric], stopPlayback)
+watch(playbackSpeed, () => {
+  if (playing.value) startPlayback()
+})
 
 onMounted(async () => {
   const facetsPromise = paperApi.facets().catch(() => ({ conferences: [], years: [] }))
@@ -351,6 +365,17 @@ onBeforeUnmount(() => {
           </div>
           <div class="animation-actions" aria-label="Trend animation controls">
             <span v-if="visibleYear" class="visible-year">Through {{ visibleYear }}</span>
+            <fieldset class="playback-speed">
+              <legend>Playback speed</legend>
+              <button
+                v-for="speed in playbackSpeeds"
+                :key="speed"
+                type="button"
+                :class="{ selected: playbackSpeed === speed }"
+                :aria-pressed="playbackSpeed === speed"
+                @click="playbackSpeed = speed"
+              >{{ speed }}×</button>
+            </fieldset>
             <button type="button" :disabled="!hasChartData || playing || isLastYear" @click="play"><Play :size="15" /> Play</button>
             <button type="button" :disabled="!playing" @click="pause"><Pause :size="15" /> Pause</button>
             <button type="button" :disabled="!hasChartData" @click="replay"><RotateCcw :size="15" /> Replay</button>
@@ -465,6 +490,10 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .animation-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; flex-wrap:wrap; }
 .visible-year { margin-right:3px; color:var(--accent); font-size:12px; font-weight:750; }
 .animation-actions button { min-height:38px; padding:0 12px; }
+.playback-speed { display:flex; align-items:center; gap:3px; padding:3px; border:1px solid var(--border); border-radius:10px; background:#f8f8fb; }
+.playback-speed legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.playback-speed button { min-width:42px; min-height:30px; padding:0 8px; border:0; background:transparent; }
+.playback-speed button.selected { color:var(--accent); background:#fff; box-shadow:0 1px 3px rgba(48,42,91,.12); }
 .panel-state { display:flex; min-height:420px; flex-direction:column; align-items:center; justify-content:center; gap:7px; text-align:center; color:var(--text-secondary); font-size:14px; }
 .panel-state strong { color:var(--text-primary); font-size:17px; }
 .data-note { margin-bottom:8px; padding:7px 10px; border-radius:8px; font-size:12px; }

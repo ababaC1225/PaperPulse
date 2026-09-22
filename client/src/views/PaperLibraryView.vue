@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import TopBar from '@/components/TopBar.vue'
 import { paperApi } from '@/services/paperApi'
@@ -44,6 +44,7 @@ const activeFilterCount = computed(() => ['conference', 'year', 'dataStatus', 's
 const hasActiveCriteria = computed(() => Boolean(query.value.trim()) || activeFilterCount.value > 0)
 const showingStart = computed(() => total.value ? offset.value + 1 : 0)
 const showingEnd = computed(() => Math.min(offset.value + papers.value.length, total.value))
+const publicSourceRoute = computed(() => ({ path: '/import', query: { title: query.value.trim() } }))
 const visiblePages = computed(() => {
   const count = pageCount.value
   if (count <= 5) return Array.from({ length: count }, (_, index) => index + 1)
@@ -375,7 +376,16 @@ onBeforeUnmount(() => {
                 <button class="delete-action" :aria-label="`Delete ${paper.title}`" title="Delete paper" @click.stop="requestDelete(paper)"><Trash2 :size="16" /></button>
               </td>
             </tr>
-            <tr v-if="!papers.length" class="empty-row"><td colspan="7">{{ listLoading ? 'Loading papers…' : hasActiveCriteria ? 'No papers match the current search and filters.' : 'No stored papers yet. Add a paper to begin.' }}</td></tr>
+            <tr v-if="!papers.length" class="empty-row">
+              <td colspan="7">
+                <div class="empty-content">
+                  <span>{{ listLoading ? 'Loading papers…' : hasActiveCriteria ? 'No papers match the current search and filters.' : 'No stored papers yet. Add a paper to begin.' }}</span>
+                  <router-link v-if="!listLoading && !loadError && query.trim()" class="public-search-link" :to="publicSourceRoute">
+                    Search public sources <ArrowRight :size="15" />
+                  </router-link>
+                </div>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -431,13 +441,13 @@ h1 { font-size:32px; font-weight:800; }
 .notice.success { color:#197a5b; background:#e4f8f0; }
 .notice span { flex:1; }
 .notice button { display:grid; place-items:center; color:inherit; }
-.library-toolbar { display:grid; grid-template-columns:minmax(280px,1fr) auto auto auto; align-items:center; gap:16px; margin-bottom:28px; }
+.library-toolbar { display:grid; min-width:0; grid-template-columns:minmax(280px,1fr) auto auto auto; align-items:center; gap:16px; margin-bottom:28px; }
 .route-filter { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-12px 0 20px; padding:10px 14px; border:1px solid #ddd6ff; border-radius:10px; color:var(--text-secondary); background:#faf9ff; font-size:14px; }
 .route-filter strong { color:var(--text-primary); }
 .route-filter button { display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-weight:700; }
 .load-note { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-12px 0 18px; padding:11px 14px; border-radius:10px; color:#9a6d00; background:#fff8e7; font-size:14px; }
 .load-note button { flex:0 0 auto; color:var(--accent); font-weight:700; }
-.local-search { display:flex; align-items:center; gap:11px; min-height:52px; padding:0 18px; border:1px solid var(--border); border-radius:12px; color:var(--text-muted); }
+.local-search { display:flex; min-width:0; align-items:center; gap:11px; min-height:52px; padding:0 18px; border:1px solid var(--border); border-radius:12px; color:var(--text-muted); }
 .local-search input { min-width:0; flex:1; border:0; outline:0; font:inherit; color:var(--text-primary); background:transparent; font-size:17px; }
 .local-search input::placeholder { color:var(--text-muted); }
 .outline-btn, .dark-btn, .danger-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:52px; padding:0 22px; border-radius:12px; font-size:16px; font-weight:600; }
@@ -462,7 +472,7 @@ button:disabled, a[aria-disabled="true"] { cursor:not-allowed; opacity:.55; }
 .filter-actions .dark-btn { min-height:43px; padding:0 20px; font-size:14px; }
 .clear-filter { color:var(--text-secondary); font-size:14px; font-weight:600; }
 .clear-filter:hover { color:var(--accent); }
-.library-card { display:flex; flex-direction:column; height:726px; overflow:hidden; padding:24px 24px 0; transition:opacity .2s ease; }
+.library-card { position:relative; display:flex; min-width:0; flex-direction:column; height:726px; overflow:hidden; padding:24px 24px 0; transition:opacity .2s ease; }
 .library-card.loading { opacity:.65; }
 .library-card-header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:14px; }
 .library-card-header h2 { margin:0; font-family:var(--font-display); font-size:24px; }
@@ -475,11 +485,15 @@ button:disabled, a[aria-disabled="true"] { cursor:not-allowed; opacity:.55; }
 .table-scroll { flex:1; min-height:0; overflow:auto; }
 .library-table { width:100%; min-width:1080px; border-collapse:collapse; }
 .library-table th { padding:10px 0; text-align:left; color:var(--text-muted); font-size:14px; font-weight:500; border-bottom:1px solid var(--border); }
+.library-table th:last-child { position:relative; }
 .library-table td { padding:17px 0; font-size:14px; border-bottom:1px solid #f0f1f6; }
 .library-table tbody tr { cursor:pointer; transition:background .15s ease; }
 .library-table tbody tr:hover, .library-table tbody tr:focus { background:#fafbff; outline:0; }
 .library-table .empty-row { cursor:default; }
 .library-table .empty-row td { padding:54px 16px; text-align:center; color:var(--text-secondary); }
+.empty-content { display:flex; flex-direction:column; align-items:center; gap:13px; }
+.public-search-link { display:inline-flex; align-items:center; gap:7px; padding:9px 13px; border:1px solid #d7d0ff; border-radius:9px; color:var(--accent); background:#faf9ff; font-weight:700; }
+.public-search-link:hover { border-color:var(--accent); background:var(--accent-soft); }
 .library-table th:not(:first-child), .library-table td:not(:first-child) { padding-left:18px; }
 .title-cell { min-width:340px; color:var(--text-primary); font-weight:500; white-space:nowrap; }
 .library-table th:first-child, .library-table td:first-child { width:72px; white-space:nowrap; }
@@ -520,5 +534,5 @@ button:disabled, a[aria-disabled="true"] { cursor:not-allowed; opacity:.55; }
 .confirm-modal p strong { color:var(--text-primary); }
 .confirm-modal .form-alert { margin-top:18px; text-align:left; }
 @media (max-width:1000px) { .library-toolbar { grid-template-columns:1fr 1fr; } .filter-panel { grid-template-columns:repeat(2,minmax(0,1fr)); } .add-paper { width:100%; } .status-legend { flex-wrap:wrap; justify-content:flex-end; } }
-@media (max-width:640px) { .library-toolbar, .filter-panel { grid-template-columns:1fr; } .filter-actions, .filter-error { grid-column:auto; } .filter-actions { justify-content:space-between; } .library-card { padding:24px 20px 0; } .library-card-header, .library-footer { align-items:flex-start; flex-direction:column; } .pagination { flex-wrap:wrap; } .modal-backdrop { align-items:end; padding:0; } .paper-modal, .confirm-modal { max-height:92vh; border-radius:18px 18px 0 0; } .form-grid { grid-template-columns:1fr; } .field-wide { grid-column:auto; } .paper-modal form, .paper-modal > header { padding-left:20px; padding-right:20px; } }
+@media (max-width:640px) { .library-toolbar, .filter-panel { grid-template-columns:minmax(0,1fr); } .library-toolbar > * { min-width:0; width:100%; } .filter-actions, .filter-error { grid-column:auto; } .filter-actions { justify-content:space-between; } .library-card { padding:24px 20px 0; } .library-card-header, .library-footer { align-items:flex-start; flex-direction:column; } .pagination { flex-wrap:wrap; } .modal-backdrop { align-items:end; padding:0; } .paper-modal, .confirm-modal { max-height:92vh; border-radius:18px 18px 0 0; } .form-grid { grid-template-columns:1fr; } .field-wide { grid-column:auto; } .paper-modal form, .paper-modal > header { padding-left:20px; padding-right:20px; } }
 </style>

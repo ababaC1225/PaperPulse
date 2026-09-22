@@ -1,14 +1,16 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ArrowRight, Clock3, RotateCcw, Search, Upload } from 'lucide-vue-next'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import TopBar from '@/components/TopBar.vue'
 import { paperApi } from '@/services/paperApi'
 
+const route = useRoute()
 const emptyCounts = Object.freeze({
   total: 0, pending: 0, processing: 0, successful: 0, duplicate: 0, missing_fields: 0, failed: 0
 })
 const historyPageSize = 10
-const title = ref('')
+const title = ref(typeof route.query.title === 'string' ? route.query.title.trim() : '')
 const candidates = ref([])
 const searchLoading = ref(false)
 const searchError = ref('')
@@ -62,6 +64,12 @@ function statusLabel(status) {
 function taskStatusClass(status) {
   if (isActiveStatus(status)) return 'processing'
   return status === 'failed' ? 'failed' : 'complete'
+}
+
+function warnBeforeUnload(event) {
+  if (!active.value) return
+  event.preventDefault()
+  event.returnValue = ''
 }
 
 function formatCreatedAt(value) {
@@ -253,11 +261,20 @@ async function retryFailed() {
   finally { retryLoading.value = false }
 }
 
-onMounted(() => loadHistory())
+onBeforeRouteLeave(() => {
+  if (!active.value) return true
+  return window.confirm('A batch import is still running. Leave this page while the server continues the import?')
+})
+
+onMounted(() => {
+  window.addEventListener('beforeunload', warnBeforeUnload)
+  loadHistory()
+})
 onBeforeUnmount(() => {
   disposed = true
   historyRequestSequence += 1
   stopPolling({ invalidate: true })
+  window.removeEventListener('beforeunload', warnBeforeUnload)
 })
 </script>
 
