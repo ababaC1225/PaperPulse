@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const projectRoot = path.resolve(serverRoot, '..')
 
 const DEFAULT_GENERAL_STOPWORDS = [
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'with'
@@ -47,6 +48,8 @@ export function loadConfig(env = process.env) {
   return {
     port: integer(env, 'PORT', 3000, { min: 1, max: 65535 }),
     databasePath: env.PAPERPULSE_DB_PATH || path.join(serverRoot, 'data', 'paperpulse.db'),
+    serveClient: boolean(env, 'PAPERPULSE_SERVE_CLIENT', env.NODE_ENV === 'production'),
+    clientDistPath: path.resolve(env.PAPERPULSE_CLIENT_DIST || path.join(projectRoot, 'client', 'dist')),
     userAgent: env.PAPERPULSE_USER_AGENT || 'PaperPulseCourseProject/1.0 (+https://github.com/paperpulse; educational metadata client)',
     requestTimeoutMs: integer(env, 'PAPERPULSE_HTTP_TIMEOUT_MS', 12_000, { min: 1_000, max: 120_000 }),
     requestConcurrency: integer(env, 'PAPERPULSE_HTTP_CONCURRENCY', 3, { min: 1, max: 10 }),

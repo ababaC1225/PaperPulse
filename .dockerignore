@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+**/node_modules
+**/dist
+server/data
+*.log
+.tmp-*
+overview-local.png
+qa-*.png
+docs/*.png

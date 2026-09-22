@@ -1,0 +1,27 @@
+services:
+  paperpulse:
+    build:
+      context: .
+    image: paperpulse:latest
+    restart: unless-stopped
+    ports:
+      - "${PAPERPULSE_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      PAPERPULSE_DB_PATH: /data/paperpulse.db
+      PAPERPULSE_SERVE_CLIENT: "true"
+      PAPERPULSE_CLIENT_DIST: /app/client/dist
+      PAPERPULSE_USER_AGENT: "${PAPERPULSE_USER_AGENT:-PaperPulseCourseProject/1.0 (educational metadata client)}"
+      PAPERPULSE_HTTP_CONCURRENCY: "${PAPERPULSE_HTTP_CONCURRENCY:-3}"
+      PAPERPULSE_HTTP_INTERVAL_MS: "${PAPERPULSE_HTTP_INTERVAL_MS:-1500}"
+      PAPERPULSE_HTTP_RETRIES: "${PAPERPULSE_HTTP_RETRIES:-2}"
+      PAPERPULSE_RESPECT_ROBOTS: "true"
+      PAPERPULSE_ENABLED_SOURCES: "${PAPERPULSE_ENABLED_SOURCES:-cvf,ecva,dblp}"
+      PAPERPULSE_SOURCE_YEARS: "${PAPERPULSE_SOURCE_YEARS:-2021,2022,2023,2024,2025}"
+    volumes:
+      - paperpulse-data:/data
+
+volumes:
+  paperpulse-data:
+    name: paperpulse-data

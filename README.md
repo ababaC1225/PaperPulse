@@ -15,6 +15,8 @@ npm run dev          # UI at http://localhost:5173
 
 The Vite server proxies `/api` to the Express server. Paper data is stored in `server/data/paperpulse.db` by default. Configure source access and processing with the variables documented in [`server/.env.example`](server/.env.example).
 
+For production, the included multi-stage Docker image serves the built Vue client and API from one container while keeping SQLite in a persistent named volume. See [`docs/deployment-huawei.md`](docs/deployment-huawei.md) for the Huawei ECS deployment, remote demo import, upgrade, backup, and smoke-test workflow.
+
 ## Implemented workflows
 
 - Search a full or partial paper title across CVF Open Access, ECVA, and DBLP.
