@@ -47,7 +47,7 @@ const positionedNodes = computed(() => {
         ringIndex = 0
         ringCapacity = 8 + ring * 6
       }
-      const radius = 112 + ring * 64
+      const radius = props.compact ? 185 + ring * 90 : 112 + ring * 64
       const angleOffset = ring % 2 ? Math.PI / ringCapacity : 0
       const angle = -Math.PI / 2 + angleOffset + (ringIndex * Math.PI * 2) / ringCapacity
       x = viewBox.centerX + Math.cos(angle) * radius

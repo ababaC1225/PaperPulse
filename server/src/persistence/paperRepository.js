@@ -606,14 +606,46 @@ export class PaperRepository {
   }
 
   listHotTopics({
-    conference = null, year = null, query = '', sort = 'count', limit = 10
+    conference = null, year = null, query = '', sort = 'count', limit = 10, growthMode = 'scoped'
   } = {}) {
-    const currentScope = eligiblePaperScope({ conference, year }, 'papers')
-    const previousYear = year ? year - 1 : null
+    let currentScope = eligiblePaperScope({ conference, year }, 'papers')
+    let growthYear = year || null
+    let previousYear = null
+    let growthScope = currentScope
+
+    if (year) {
+      const represented = this.db.prepare(`
+        SELECT MAX(papers.year) AS year
+        FROM papers
+        WHERE ${eligiblePaperScope({ conference }, 'papers').clauses.join(' AND ')}
+          AND papers.year < ?
+      `).get(...eligiblePaperScope({ conference }, 'papers').params, year)
+      previousYear = represented?.year ? Number(represented.year) : null
+    }
+
+    // An all-years table still needs a meaningful comparison period. Keep the
+    // default API behavior unchanged, but let dashboards opt into the latest
+    // two represented years without treating missing years as zero data.
+    if (!year && growthMode === 'latest') {
+      const representedYears = this.db.prepare(`
+        SELECT DISTINCT papers.year
+        FROM papers
+        WHERE ${currentScope.clauses.join(' AND ')}
+          AND papers.year IS NOT NULL
+        ORDER BY papers.year DESC
+        LIMIT 2
+      `).all(...currentScope.params).map((row) => Number(row.year))
+      growthYear = representedYears[0] || null
+      previousYear = representedYears[1] || null
+      currentScope = growthYear
+        ? eligiblePaperScope({ conference, year: growthYear }, 'papers')
+        : currentScope
+      growthScope = currentScope
+    }
     const previousScope = previousYear
       ? eligiblePaperScope({ conference, year: previousYear }, 'papers')
       : { clauses: ['0'], params: [] }
-    const eligiblePaperTotal = this.countEligiblePapers({ conference, year })
+    const eligiblePaperTotal = this.countEligiblePapers({ conference, year: growthMode === 'latest' ? growthYear : year })
     const normalizedQuery = normalizeTitle(query)
     const topicFilter = normalizedQuery
       ? "WHERE topic LIKE ? ESCAPE '\\'"
@@ -638,6 +670,23 @@ export class PaperRepository {
         SELECT topic, COUNT(*) AS paper_count
         FROM current_topics
         ${topicFilter}
+        GROUP BY topic
+      ),
+      growth_topics AS (
+        SELECT DISTINCT
+          papers.paper_id,
+          lower(trim(CAST(keyword.value AS TEXT))) AS topic
+        FROM papers
+        JOIN json_each(
+          CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+        ) AS keyword
+        WHERE ${growthScope.clauses.join(' AND ')}
+          AND keyword.type = 'text'
+          AND length(trim(CAST(keyword.value AS TEXT))) > 0
+      ),
+      growth_counts AS (
+        SELECT topic, COUNT(*) AS paper_count
+        FROM growth_topics
         GROUP BY topic
       ),
       previous_topics AS (
@@ -669,12 +718,13 @@ export class PaperRepository {
           CASE
             WHEN ? = 0 OR COALESCE(previous_counts.paper_count, 0) = 0 THEN NULL
             ELSE round(
-              (current_counts.paper_count - previous_counts.paper_count) * 100.0
+              (COALESCE(growth_counts.paper_count, 0) - previous_counts.paper_count) * 100.0
               / previous_counts.paper_count,
               1
             )
           END AS growth_percent
         FROM current_counts
+        LEFT JOIN growth_counts ON growth_counts.topic = current_counts.topic
         LEFT JOIN previous_counts ON previous_counts.topic = current_counts.topic
       )
       SELECT topic, paper_count, share_percent, previous_paper_count, growth_percent
@@ -684,12 +734,68 @@ export class PaperRepository {
     `).all(
       ...currentScope.params,
       ...topicFilterParams,
+      ...growthScope.params,
       ...previousScope.params,
       eligiblePaperTotal,
       eligiblePaperTotal,
-      previousYear ? 1 : 0,
+      growthYear && previousYear ? 1 : 0,
       limit
     )
+
+    const selectedTopics = rows.map((row) => row.topic)
+    const trendByTopic = new Map(selectedTopics.map((topic) => [topic, []]))
+    if (selectedTopics.length) {
+      const placeholders = selectedTopics.map(() => '?').join(', ')
+      const trendScope = eligiblePaperScope({ conference }, 'papers')
+      const trendRows = this.db.prepare(`
+        WITH eligible_years AS (
+          SELECT papers.year, COUNT(*) AS eligible_paper_total
+          FROM papers
+          WHERE ${trendScope.clauses.join(' AND ')}
+            AND papers.year IS NOT NULL
+            AND (? IS NULL OR papers.year <= ?)
+          GROUP BY papers.year
+        ),
+        topic_years AS (
+          SELECT
+            lower(trim(CAST(keyword.value AS TEXT))) AS topic,
+            papers.year,
+            COUNT(DISTINCT papers.paper_id) AS paper_count
+          FROM papers
+          JOIN json_each(
+            CASE WHEN json_valid(papers.keywords_json) THEN papers.keywords_json ELSE '[]' END
+          ) AS keyword
+          WHERE ${trendScope.clauses.join(' AND ')}
+            AND papers.year IS NOT NULL
+            AND (? IS NULL OR papers.year <= ?)
+            AND keyword.type = 'text'
+            AND lower(trim(CAST(keyword.value AS TEXT))) IN (${placeholders})
+          GROUP BY topic, papers.year
+        )
+        SELECT
+          topics.topic,
+          eligible_years.year,
+          COALESCE(topic_years.paper_count, 0) AS paper_count,
+          round(COALESCE(topic_years.paper_count, 0) * 100.0 / eligible_years.eligible_paper_total, 1) AS share_percent
+        FROM (SELECT DISTINCT topic FROM topic_years) AS topics
+        CROSS JOIN eligible_years
+        LEFT JOIN topic_years
+          ON topic_years.topic = topics.topic
+          AND topic_years.year = eligible_years.year
+        ORDER BY topics.topic COLLATE NOCASE ASC, eligible_years.year ASC
+      `).all(
+        ...trendScope.params, growthYear, growthYear,
+        ...trendScope.params, growthYear, growthYear,
+        ...selectedTopics
+      )
+      for (const point of trendRows) {
+        trendByTopic.get(point.topic)?.push({
+          year: Number(point.year),
+          paper_count: Number(point.paper_count),
+          share_percent: Number(point.share_percent)
+        })
+      }
+    }
 
     return {
       scope: { conference, year },
@@ -697,6 +803,10 @@ export class PaperRepository {
         unit: 'distinct eligible papers containing a normalized keyword',
         eligible_paper_total: eligiblePaperTotal,
         growth_baseline_year: previousYear,
+        ...(growthYear ? { growth_target_year: growthYear } : {}),
+        ...(growthMode === 'latest' ? {
+          growth_mode: growthMode
+        } : {}),
         causality_warning: 'Keyword co-occurrence and frequency do not imply research quality or causality.'
       },
       items: rows.map((row, index) => ({
@@ -704,8 +814,9 @@ export class PaperRepository {
         topic: row.topic,
         paper_count: Number(row.paper_count),
         share_percent: Number(row.share_percent),
-        previous_paper_count: previousYear ? Number(row.previous_paper_count) : null,
-        growth_percent: row.growth_percent == null ? null : Number(row.growth_percent)
+        previous_paper_count: growthYear && previousYear ? Number(row.previous_paper_count) : null,
+        growth_percent: row.growth_percent == null ? null : Number(row.growth_percent),
+        trend: trendByTopic.get(row.topic) || []
       }))
     }
   }
@@ -980,9 +1091,52 @@ export class PaperRepository {
         ...connectedNodes.map(({ topic, paper_count: paperCount }) => ({ topic, paper_count: paperCount }))
       ]
     } else {
-      selectedNodes = nodeRows
-        .filter((node) => node.paper_count >= minNodeCount)
-        .slice(0, maxNodes)
+      const eligibleNodes = nodeRows.filter((node) => node.paper_count >= minNodeCount)
+      // Dashboard previews request a small node budget. Prefer a connected
+      // neighborhood for that budget so the graph does not become isolated
+      // dots merely because high-frequency nodes were selected first.
+      if (maxNodes === 6) {
+        const availableLinks = queryPairs()
+        const nodeByTopic = new Map(eligibleNodes.map((node) => [node.topic, node]))
+        const selectedTopics = new Set()
+        const connectedNodes = []
+        const addTopic = (topic) => {
+          if (!selectedTopics.has(topic) && nodeByTopic.has(topic) && selectedTopics.size < maxNodes) {
+            selectedTopics.add(topic)
+            connectedNodes.push(nodeByTopic.get(topic))
+          }
+        }
+        const topTopic = eligibleNodes[0]?.topic
+        const topHasEdge = topTopic && availableLinks.some((link) => link.source === topTopic || link.target === topTopic)
+        if (topHasEdge || !availableLinks.length) {
+          addTopic(topTopic)
+        } else {
+          const strongestLink = availableLinks.find((link) => nodeByTopic.has(link.source) && nodeByTopic.has(link.target))
+          addTopic(strongestLink?.source)
+          addTopic(strongestLink?.target)
+        }
+        while (connectedNodes.length < maxNodes && connectedNodes.length < eligibleNodes.length) {
+          const candidate = eligibleNodes
+            .filter((node) => !selectedTopics.has(node.topic))
+            .map((node) => ({
+              node,
+              connectionWeight: availableLinks.reduce((total, link) => {
+                const touchesNode = link.source === node.topic || link.target === node.topic
+                const otherTopic = link.source === node.topic ? link.target : link.source
+                return total + (touchesNode && selectedTopics.has(otherTopic) ? link.cooccurrence_count : 0)
+              }, 0)
+            }))
+            .sort((left, right) => right.connectionWeight - left.connectionWeight
+              || right.node.weighted_degree - left.node.weighted_degree
+              || right.node.paper_count - left.node.paper_count
+              || compareTopics(left.node.topic, right.node.topic))[0]
+          if (!candidate) break
+          addTopic(candidate.node.topic)
+        }
+        selectedNodes = connectedNodes
+      } else {
+        selectedNodes = eligibleNodes.slice(0, maxNodes)
+      }
     }
 
     const links = queryPairs({ selectedTopics: selectedNodes.map((node) => node.topic) })
@@ -1044,7 +1198,17 @@ export class PaperRepository {
     if (topicCount === 0) return null
 
     const eligiblePaperTotal = this.countEligiblePapers({ conference, year })
-    const previousYear = year ? year - 1 : null
+    let previousYear = null
+    if (year) {
+      const priorScope = eligiblePaperScope({ conference }, 'papers')
+      const represented = this.db.prepare(`
+        SELECT MAX(papers.year) AS year
+        FROM papers
+        WHERE ${priorScope.clauses.join(' AND ')}
+          AND papers.year < ?
+      `).get(...priorScope.params, year)
+      previousYear = represented?.year ? Number(represented.year) : null
+    }
     let previousPaperCount = null
     if (previousYear) {
       const previousScope = eligiblePaperScope({ conference, year: previousYear }, 'papers')
@@ -1132,6 +1296,7 @@ export class PaperRepository {
       share_percent: eligiblePaperTotal ? Number(((topicCount / eligiblePaperTotal) * 100).toFixed(1)) : 0,
       previous_paper_count: previousPaperCount,
       growth_percent: previousPaperCount == null ? null : percentageChange(topicCount, previousPaperCount),
+      growth_baseline_year: previousYear,
       trend,
       trend_methodology: {
         years: 'ascending years with at least one eligible paper in the selected conference scope',

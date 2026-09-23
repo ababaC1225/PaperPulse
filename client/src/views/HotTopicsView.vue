@@ -77,10 +77,19 @@ function barWidth(topic) {
   return value ? `${Math.max(5, (value / metricMaximum.value) * 100)}%` : '0%'
 }
 
-function growthLabel(value, baselineYear = null) {
-  if (value == null) return baselineYear ? `No ${baselineYear} baseline` : 'No baseline'
+function growthLabel(value, baselineYear = null, targetYear = null, previousPaperCount = null) {
+  if (value == null) {
+    if (targetYear && baselineYear && previousPaperCount === 0) return `New in ${targetYear}`
+    return 'No comparison'
+  }
   return `${value > 0 ? '+' : ''}${value}%`
 }
+
+const topicScopeNote = computed(() => {
+  const targetYear = topicsResponse.value?.methodology?.growth_target_year
+  if (targetYear && !selectedYear.value) return `Showing the latest represented year (${targetYear})`
+  return ''
+})
 
 function formatAuthors(authors) {
   return Array.isArray(authors) && authors.length ? authors.join(', ') : 'Not available'
@@ -116,6 +125,7 @@ async function loadTopics({ includeFacets = false } = {}) {
   try {
     const requests = [paperApi.hotTopics({
       ...scopeParams(),
+      growth_mode: selectedYear.value ? 'scoped' : 'latest',
       query: query.value.trim(),
       sort: selectedSort.value,
       limit: 10
@@ -287,6 +297,7 @@ onBeforeUnmount(() => {
           <div>
             <h2>Top 10 research directions</h2>
             <p>Ranked by {{ selectedMetricLabel }} among eligible papers</p>
+            <p v-if="topicScopeNote" class="scope-note">{{ topicScopeNote }}; growth compares with {{ topicsResponse.methodology.growth_baseline_year }}.</p>
           </div>
           <span v-if="topicsResponse" class="scope-total">{{ topicsResponse.methodology.eligible_paper_total }} eligible papers</span>
         </header>
@@ -317,7 +328,7 @@ onBeforeUnmount(() => {
             <span class="rank-number">{{ topic.paper_count }}</span>
             <span class="rank-number">{{ topic.share_percent }}%</span>
             <span class="rank-growth" :class="{ neutral: topic.growth_percent == null, negative: topic.growth_percent < 0 }">
-              {{ growthLabel(topic.growth_percent) }}
+              {{ growthLabel(topic.growth_percent, topicsResponse?.methodology?.growth_baseline_year, topicsResponse?.methodology?.growth_target_year, topic.previous_paper_count) }}
             </span>
           </button>
         </div>
@@ -343,7 +354,7 @@ onBeforeUnmount(() => {
             <div><strong>{{ topicDetail.share_percent }}%</strong><span>Eligible share</span></div>
             <div>
               <strong :class="{ neutral: topicDetail.growth_percent == null, negative: topicDetail.growth_percent < 0 }">
-                {{ growthLabel(topicDetail.growth_percent, topicDetail.scope.year ? topicDetail.scope.year - 1 : null) }}
+                {{ growthLabel(topicDetail.growth_percent, topicDetail.growth_baseline_year, topicDetail.scope.year, topicDetail.previous_paper_count) }}
               </strong>
               <span>Growth</span>
             </div>
@@ -408,7 +419,7 @@ onBeforeUnmount(() => {
         <template v-if="topicsResponse.methodology.growth_baseline_year">
           Growth compares with {{ topicsResponse.methodology.growth_baseline_year }}; a zero prior count has no baseline.
         </template>
-        <template v-else>Growth is not calculated until a specific year is selected.</template>
+        <template v-else>Growth is shown for the latest represented year when no year filter is selected; choose a year for a scoped comparison.</template>
       </p>
       <strong>{{ topicsResponse.methodology.causality_warning }}</strong>
     </section>
@@ -420,6 +431,7 @@ onBeforeUnmount(() => {
 .page-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:18px; }
 h1 { font-size:32px; font-weight:800; }
 .subtitle { margin:4px 0 0; color:var(--text-secondary); font-size:16px; }
+.scope-note { color:var(--accent); font-size:12px; font-weight:600; }
 .dark-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:0 20px; border-radius:11px; background:var(--text-primary); color:#fff; font-size:14px; font-weight:700; }
 .dark-btn:hover:not(:disabled) { background:var(--accent); }
 .dark-btn:disabled { cursor:not-allowed; opacity:.45; }

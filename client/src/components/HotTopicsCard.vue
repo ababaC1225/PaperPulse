@@ -1,13 +1,15 @@
 <script setup>
 import { computed } from 'vue'
 import { Flame, ArrowRight, RefreshCw } from 'lucide-vue-next'
+import SparkLine from './SparkLine.vue'
 
 const props = defineProps({
   topics: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
   emptyMessage: { type: String, default: 'No eligible topics are available.' },
-  baselineYear: { type: Number, default: null }
+  baselineYear: { type: Number, default: null },
+  targetYear: { type: Number, default: null }
 })
 
 defineEmits(['retry'])
@@ -15,9 +17,18 @@ defineEmits(['retry'])
 const colors = ['#6f61ef', '#27c3b2', '#5f8df6', '#ffa34c', '#f27698', '#20ad84', '#527cf0', '#8765ed', '#15a985', '#e6a700']
 const displayedTopics = computed(() => props.topics.slice(0, 10))
 
-function growthLabel(value) {
-  if (value == null) return 'No baseline'
+function growthLabel(topic) {
+  const value = topic.growth_percent
+  if (value == null) {
+    if (props.targetYear && props.baselineYear && topic.previous_paper_count === 0) return 'New'
+    if (props.targetYear && props.baselineYear && topic.paper_count > 0) return 'No prior papers'
+    return 'No comparison'
+  }
   return `${value > 0 ? '+' : ''}${value}%`
+}
+
+function trendValues(topic) {
+  return (topic.trend || []).map((point) => Number(point.share_percent))
 }
 </script>
 
@@ -27,6 +38,7 @@ function growthLabel(value) {
       <div class="card-title">
         <Flame color="#ff922b" :stroke-width="2" />
         Top 10 Hot Topics
+        <span v-if="targetYear" class="card-context">{{ targetYear }} snapshot</span>
       </div>
       <router-link to="/hot-topics" class="card-go" title="View all hot topics">
         <ArrowRight />
@@ -51,7 +63,7 @@ function growthLabel(value) {
           <th class="col-topic">Topic</th>
           <th class="col-papers">Papers</th>
           <th class="col-share">Share</th>
-          <th class="col-trend">{{ baselineYear ? `Growth vs ${baselineYear}` : 'Growth' }}</th>
+          <th class="col-trend">{{ baselineYear ? `Trend vs ${baselineYear}` : 'Trend' }}</th>
         </tr>
       </thead>
       <tbody>
@@ -66,7 +78,16 @@ function growthLabel(value) {
           <td class="col-papers">{{ topic.paper_count }}</td>
           <td class="col-share">{{ topic.share_percent }}%</td>
           <td class="col-trend" :class="{ neutral: topic.growth_percent == null, negative: topic.growth_percent < 0 }">
-            {{ growthLabel(topic.growth_percent) }}
+            <span class="trend-cell">
+              <span>{{ growthLabel(topic) }}</span>
+              <SparkLine
+                v-if="trendValues(topic).length > 1"
+                :data="trendValues(topic)"
+                :width="74"
+                :height="24"
+                :color="topic.growth_percent < 0 ? '#cf6077' : '#20ad84'"
+              />
+            </span>
           </td>
         </tr>
       </tbody>
@@ -154,6 +175,13 @@ function growthLabel(value) {
   font-weight: 500;
 }
 
+.card-context {
+  margin-left: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .col-share {
   width: 14%;
   font-weight: 500;
@@ -163,6 +191,22 @@ function growthLabel(value) {
   width: 29%;
   color: var(--green);
   font-weight: 600;
+}
+
+.trend-cell {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trend-cell > span {
+  min-width: 66px;
+}
+
+.trend-cell svg {
+  flex: 0 0 auto;
 }
 
 .col-trend.neutral {

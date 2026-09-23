@@ -13,23 +13,61 @@ const props = defineProps({
 
 defineEmits(['retry'])
 
-const previewNodes = computed(() => [...props.nodes]
-  .sort((left, right) => (
-    right.weighted_degree - left.weighted_degree
+const previewNodeLimit = 10
+const previewLinkLimit = 20
+
+function compareNodes(left, right) {
+  return right.weighted_degree - left.weighted_degree
     || right.paper_count - left.paper_count
     || (left.topic < right.topic ? -1 : left.topic > right.topic ? 1 : 0)
-  ))
-  .slice(0, 6))
-const previewNodeIds = computed(() => new Set(previewNodes.value.map((node) => node.id)))
-const previewLinks = computed(() => props.links
-  .filter((link) => previewNodeIds.value.has(link.source) && previewNodeIds.value.has(link.target))
-  .sort((left, right) => (
-    right.cooccurrence_count - left.cooccurrence_count
+}
+
+function compareLinks(left, right) {
+  return right.cooccurrence_count - left.cooccurrence_count
     || right.jaccard_similarity - left.jaccard_similarity
     || (left.source < right.source ? -1 : left.source > right.source ? 1 : 0)
     || (left.target < right.target ? -1 : left.target > right.target ? 1 : 0)
-  ))
-  .slice(0, 10))
+}
+
+const previewNodes = computed(() => {
+  const rankedNodes = [...props.nodes].sort(compareNodes)
+  const nodeById = new Map(rankedNodes.map((node) => [node.id, node]))
+  const rankedLinks = [...props.links].sort(compareLinks)
+  const selected = []
+  const selectedIds = new Set()
+  const addNode = (id) => {
+    const node = nodeById.get(id)
+    if (node && !selectedIds.has(id) && selected.length < previewNodeLimit) {
+      selected.push(node)
+      selectedIds.add(id)
+    }
+  }
+
+  // Keep the strongest node visible, then grow the preview through real
+  // co-occurrence links so a sparse network does not render as disconnected dots.
+  addNode(rankedNodes[0]?.id)
+  while (selected.length < previewNodeLimit && selected.length < rankedNodes.length) {
+    const connectedCandidate = rankedNodes
+      .filter((node) => !selectedIds.has(node.id))
+      .map((node) => ({
+        node,
+        connectionWeight: rankedLinks.reduce((total, link) => {
+          const touchesNode = link.source === node.id || link.target === node.id
+          const otherId = link.source === node.id ? link.target : link.source
+          return total + (touchesNode && selectedIds.has(otherId) ? link.cooccurrence_count : 0)
+        }, 0)
+      }))
+      .sort((left, right) => right.connectionWeight - left.connectionWeight || compareNodes(left.node, right.node))[0]
+    if (connectedCandidate?.connectionWeight > 0) addNode(connectedCandidate.node.id)
+    else addNode(rankedNodes.find((node) => !selectedIds.has(node.id))?.id)
+  }
+  return selected
+})
+const previewNodeIds = computed(() => new Set(previewNodes.value.map((node) => node.id)))
+const previewLinks = computed(() => props.links
+  .filter((link) => previewNodeIds.value.has(link.source) && previewNodeIds.value.has(link.target))
+  .sort(compareLinks)
+  .slice(0, previewLinkLimit))
 </script>
 
 <template>

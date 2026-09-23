@@ -92,6 +92,7 @@ function paperRoute(paper) {
   width: 100%;
   min-width: 860px;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .papers-table th {
@@ -133,10 +134,18 @@ function paperRoute(paper) {
 }
 
 .col-title {
-  width: 48%;
-  max-width: 560px;
+  width: 46%;
   white-space: nowrap;
 }
+
+.paper-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col-authors { width: 22%; overflow: hidden; text-overflow: ellipsis; }
+.col-conf { width: 17%; overflow: hidden; text-overflow: ellipsis; }
 
 .paper-title {
   font-weight: 600;

@@ -164,6 +164,24 @@ test('growth uses the preceding scoped year, preserves zero baselines, and sorts
   } finally { repository.close() }
 })
 
+test('latest growth mode compares the newest two represented years in an unscoped request', () => {
+  const repository = new PaperRepository(':memory:')
+  try {
+    seed(repository)
+    const result = repository.listHotTopics({ conference: 'CVPR', growthMode: 'latest', sort: 'count' })
+    assert.equal(result.methodology.growth_target_year, 2025)
+    assert.equal(result.methodology.growth_baseline_year, 2024)
+    assert.equal(result.methodology.eligible_paper_total, 3)
+    assert.deepEqual(result.items.map((item) => [item.topic, item.paper_count, item.previous_paper_count, item.growth_percent]), [
+      ['shared', 3, 2, 50],
+      ['diffusion', 2, 1, 100],
+      ['declining', 1, 2, -50],
+      ['duplicate', 1, 0, null],
+      ['growth only', 1, 0, null]
+    ])
+  } finally { repository.close() }
+})
+
 test('hot-topic filters, substring query, and limit apply to the selected scope', () => {
   const repository = new PaperRepository(':memory:')
   try {
@@ -216,6 +234,7 @@ test('hot-topic and topic-detail validation remains intact beside the live netwo
       '/api/topics/hot?conference=NeurIPS',
       '/api/topics/hot?year=1979',
       '/api/topics/hot?sort=quality',
+      '/api/topics/hot?growth_mode=rolling',
       '/api/topics/hot?limit=0',
       '/api/topics/hot?limit=101',
       '/api/topics/diffusion?paper_limit=51',

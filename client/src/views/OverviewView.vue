@@ -115,10 +115,10 @@ async function loadDashboard({ includeFacets = false } = {}) {
     const requests = [
       paperApi.overviewStats(currentParams()),
       paperApi.recent({ ...currentParams(), limit: 4 }),
-      paperApi.hotTopics({ ...currentParams(), sort: 'count', limit: 10 })
+      paperApi.hotTopics({ ...currentParams(), growth_mode: selectedYear.value ? 'scoped' : 'latest', sort: 'count', limit: 10 })
         .then((value) => ({ value, error: null }))
         .catch((error) => ({ value: null, error })),
-      paperApi.keywordNetwork({ ...currentParams(), max_nodes: 6, max_edges: 10 })
+      paperApi.keywordNetwork({ ...currentParams(), max_nodes: 20, max_edges: 100 })
         .then((value) => ({ value, error: null }))
         .catch((error) => ({ value: null, error }))
     ]
@@ -216,6 +216,7 @@ onBeforeUnmount(() => { requestSequence += 1 })
         :error="hotTopicsError"
         :empty-message="hotTopicsEmptyMessage"
         :baseline-year="hotTopicsResponse?.methodology?.growth_baseline_year"
+        :target-year="hotTopicsResponse?.methodology?.growth_target_year || (selectedYear ? Number(selectedYear) : null)"
         @retry="refreshDashboard"
       />
       <KeywordNetwork

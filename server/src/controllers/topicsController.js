@@ -22,6 +22,14 @@ function topicSort(value) {
   return sort
 }
 
+function growthMode(value) {
+  const mode = singleQueryValue(value) || 'scoped'
+  if (!['scoped', 'latest'].includes(mode)) {
+    throw new ValidationError('Growth mode must be scoped or latest')
+  }
+  return mode
+}
+
 function topicQuery(value) {
   return singleQueryValue(value, 'Query')
 }
@@ -137,6 +145,7 @@ export function createGetHotTopics({ repository }) {
         year: optionalYear(request.query.year),
         query: topicQuery(request.query.query),
         sort: topicSort(request.query.sort),
+        growthMode: growthMode(request.query.growth_mode),
         limit: boundedInteger(request.query.limit, 10, 1, 100, 'Limit')
       }))
     } catch (error) { next(error) }
